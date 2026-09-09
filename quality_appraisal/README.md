@@ -37,5 +37,5 @@ The DARE-Arbo digital workspace is a pre-release, non-production implementation 
 ## Primary framework sources in this directory
 
 - `Application_principle.docx` - audited scoring codebook and operational rules.
-- `DARE_Arbo_Library_with_Decision_Tree.xlsx` - active-infection and neutralizing-antibody endpoint/tier harmonization.
+- `DARE_Arbo_Library_with_Decision_Tree.xlsx` - population representation appraisal library and decision tree.
 - `DARE_Arbo_workbook.xlsx` - audited study-level scoring structure and examples.
