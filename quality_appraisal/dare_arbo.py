@@ -118,6 +118,26 @@ def resolve_overview_colors(overrides: Mapping[str, str] | None = None) -> dict[
     }
 
 
+def _load_presentation_font(image_font: Any, size: int, bold: bool = False) -> Any:
+    """Load a scalable presentation font across Windows, WSL, and Linux hosts."""
+    candidates = (
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        "/mnt/c/Windows/Fonts/arialbd.ttf" if bold else "/mnt/c/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+    )
+    for candidate in candidates:
+        try:
+            return image_font.truetype(candidate, size=size)
+        except OSError:
+            continue
+    try:
+        return image_font.load_default(size=size)
+    except TypeError:  # pragma: no cover - compatibility with older Pillow
+        return image_font.load_default()
+
+
 @dataclass(frozen=True)
 class Criterion:
     code: str
@@ -745,30 +765,23 @@ def render_assessment_png(
     except ImportError as exc:  # pragma: no cover - declared runtime dependency
         raise RuntimeError("PNG rendering requires the 'Pillow' package.") from exc
 
-    width, height = 1800, 1540
+    width, height = 1800, 1900
     colors = resolve_overview_colors(presentation_colors)
     canvas = Image.new("RGB", (width, height), colors["background"])
     draw = ImageDraw.Draw(canvas)
 
     def load_font(size: int, bold: bool = False):
-        candidates = (
-            ("C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf"),
-            ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
-        )
-        for candidate in candidates:
-            try:
-                return ImageFont.truetype(candidate, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+        return _load_presentation_font(ImageFont, size, bold)
 
-    title_font = load_font(60, bold=True)
-    subtitle_font = load_font(25)
-    section_font = load_font(27, bold=True)
-    box_font = load_font(22, bold=True)
-    body_font = load_font(19)
-    small_font = load_font(16)
-    score_font = load_font(70, bold=True)
+    # Streamlit scales the complete overview to the available browser width.
+    # Presentation-sized source type keeps every label readable after scaling.
+    title_font = load_font(70, bold=True)
+    subtitle_font = load_font(32)
+    section_font = load_font(35, bold=True)
+    box_font = load_font(30, bold=True)
+    body_font = load_font(27)
+    small_font = load_font(23)
+    score_font = load_font(82, bold=True)
 
     def wrapped_lines(text: str, font: Any, max_width: int) -> list[str]:
         words = str(text).split()
@@ -877,10 +890,10 @@ def render_assessment_png(
     endpoint_label = str(classification.get("endpoint") or metadata.get("endpoint_label") or "Endpoint not specified")
 
     # Header band and study metadata.
-    draw.rectangle((0, 0, width, 168), fill=colors["charcoal"])
-    draw.rectangle((0, 164, width, 168), fill=colors["teal"])
-    draw.text((72, 34), "Arboviral Risk of Bias Assessor", font=title_font, fill="#FFFFFF")
-    draw.text((74, 111), "DARE-Arbo | endpoint-specific quality overview", font=subtitle_font, fill="#FFFFFF")
+    draw.rectangle((0, 0, width, 190), fill=colors["charcoal"])
+    draw.rectangle((0, 186, width, 190), fill=colors["teal"])
+    draw.text((72, 28), "Arboviral Risk of Bias Assessor", font=title_font, fill="#FFFFFF")
+    draw.text((74, 118), "DARE-Arbo | endpoint-specific quality overview", font=subtitle_font, fill="#FFFFFF")
     if branding_logo:
         try:
             logo = Image.open(BytesIO(branding_logo)).convert("RGBA")
@@ -888,7 +901,7 @@ def render_assessment_png(
             if alpha_bounds:
                 logo = logo.crop(alpha_bounds)
             logo.thumbnail((132, 132), Image.Resampling.LANCZOS)
-            logo_panel = (1592, 14, 1756, 154)
+            logo_panel = (1588, 14, 1758, 174)
             draw.rounded_rectangle(
                 logo_panel,
                 radius=18,
@@ -908,12 +921,12 @@ def render_assessment_png(
     ]
     meta_text = "  |  ".join(bit for bit in study_bits if bit)
     meta_width = min(1180, draw.textbbox((0, 0), meta_text, font=body_font)[2] + 46)
-    draw.rounded_rectangle((68, 181, 68 + meta_width, 222), radius=18, fill=colors["paper"], outline=colors["border"], width=2)
-    draw.text((88, 190), meta_text, font=body_font, fill=colors["muted"])
+    draw.rounded_rectangle((68, 207, 68 + meta_width, 259), radius=18, fill=colors["paper"], outline=colors["border"], width=2)
+    draw.text((88, 216), meta_text, font=body_font, fill=colors["muted"])
 
-    entry_box = (710, 238, 1090, 310)
+    entry_box = (690, 286, 1110, 378)
     rounded_box(entry_box, "Assessment entry")
-    draw.text((72, 352), "1. Synthesis endpoint", font=section_font, fill=colors["ink"])
+    draw.text((72, 416), "1. Synthesis endpoint", font=section_font, fill=colors["ink"])
 
     endpoint_options = [endpoint.label for endpoint in ENDPOINTS]
     option_gap = 10
@@ -921,12 +934,13 @@ def render_assessment_png(
     endpoint_boxes: list[tuple[int, int, int, int]] = []
     for index, option in enumerate(endpoint_options):
         x1 = 72 + index * (option_width + option_gap)
-        box = (x1, 404, x1 + option_width, 505)
+        box = (x1, 472, x1 + option_width, 618)
         endpoint_boxes.append(box)
         is_selected = option == endpoint_label
+        display_option = re.sub(r"(?<=\w)-(?=\w)", "- ", option)
         rounded_box(
             box,
-            option,
+            display_option,
             selected=is_selected,
             fill=colors["navy"] if is_selected else colors["paper"],
             outline=colors["cyan"] if is_selected else colors["border"],
@@ -936,20 +950,20 @@ def render_assessment_png(
     branch(
         (900, entry_box[3]),
         [((box[0] + box[2]) / 2, box[1]) for box in endpoint_boxes],
-        trunk_y=382,
+        trunk_y=448,
     )
 
     selected_endpoint = next(
         (box for option, box in zip(endpoint_options, endpoint_boxes) if option == endpoint_label),
         endpoint_boxes[-1],
     )
-    pathway_heading = (682, 570, 1118, 634)
+    pathway_heading = (660, 690, 1140, 782)
     selected_endpoint_x = (selected_endpoint[0] + selected_endpoint[2]) / 2
     poly_arrow(
         [
             (selected_endpoint_x, selected_endpoint[3]),
-            (selected_endpoint_x, 540),
-            (900, 540),
+            (selected_endpoint_x, 654),
+            (900, 654),
             (900, pathway_heading[1]),
         ],
         fill=colors["teal"],
@@ -957,8 +971,8 @@ def render_assessment_png(
     rounded_box(pathway_heading, "2. DARE measurement pathway")
 
     pathway_boxes = {
-        "serologic": (380, 688, 820, 774),
-        "direct_detection": (980, 688, 1420, 774),
+        "serologic": (340, 852, 820, 974),
+        "direct_detection": (980, 852, 1460, 974),
     }
     serologic_pathway_label = (
         "Test-adjusted endpoint · Q10 applies · max 19"
@@ -978,17 +992,17 @@ def render_assessment_png(
     branch(
         (900, pathway_heading[3]),
         [((box[0] + box[2]) / 2, box[1]) for box in pathway_boxes.values()],
-        trunk_y=660,
+        trunk_y=820,
     )
 
     selected_pathway = pathway_boxes[pathway]
-    domain_heading = (690, 838, 1110, 902)
+    domain_heading = (660, 1040, 1140, 1132)
     selected_pathway_x = (selected_pathway[0] + selected_pathway[2]) / 2
     poly_arrow(
         [
             (selected_pathway_x, selected_pathway[3]),
-            (selected_pathway_x, 808),
-            (900, 808),
+            (selected_pathway_x, 1008),
+            (900, 1008),
             (900, domain_heading[1]),
         ],
         fill=colors["teal"],
@@ -1002,31 +1016,27 @@ def render_assessment_png(
     domain_tints = [colors["blue_pale"], colors["purple_pale"], colors["mint"], colors["gold_pale"]]
     for index, domain in enumerate(DOMAINS):
         x1 = 72 + index * (domain_width + domain_gap)
-        box = (x1, 958, x1 + domain_width, 1204)
+        box = (x1, 1202, x1 + domain_width, 1528)
         domain_boxes.append(box)
         values = result["domains"][domain]
         shadow_box = (box[0] + 5, box[1] + 7, box[2] + 5, box[3] + 7)
         draw.rounded_rectangle(shadow_box, radius=20, fill=colors["shadow"])
         draw.rounded_rectangle(box, radius=20, fill=colors["paper"], outline=colors["border"], width=2)
         draw.rounded_rectangle((box[0], box[1], box[2], box[1] + 14), radius=7, fill=domain_accents[index])
-        draw.rounded_rectangle((box[0] + 20, box[1] + 20, box[2] - 20, box[1] + 66), radius=13, fill=domain_tints[index])
-        title_lines = wrapped_lines(domain, box_font, domain_width - 36)
-        title_y = box[1] + 18
-        for line in title_lines:
-            bbox = draw.textbbox((0, 0), line, font=box_font)
-            draw.text((box[0] + (domain_width - (bbox[2] - bbox[0])) / 2, title_y), line, font=box_font, fill=colors["ink"])
-            title_y += 28
+        title_panel = (box[0] + 20, box[1] + 22, box[2] - 20, box[1] + 92)
+        draw.rounded_rectangle(title_panel, radius=13, fill=domain_tints[index])
+        centered_text(title_panel, domain, box_font, colors["ink"], padding=10)
         score_text = f"{values['score']} / {values['maximum']}"
         score_bbox = draw.textbbox((0, 0), score_text, font=section_font)
-        draw.text((box[0] + (domain_width - (score_bbox[2] - score_bbox[0])) / 2, box[1] + 86), score_text, font=section_font, fill=domain_accents[index])
-        bar = (box[0] + 28, box[1] + 132, box[2] - 28, box[1] + 150)
-        draw.rounded_rectangle(bar, radius=9, fill=colors["grey"])
+        draw.text((box[0] + (domain_width - (score_bbox[2] - score_bbox[0])) / 2, box[1] + 112), score_text, font=section_font, fill=domain_accents[index])
+        bar = (box[0] + 28, box[1] + 166, box[2] - 28, box[1] + 190)
+        draw.rounded_rectangle(bar, radius=12, fill=colors["grey"])
         fraction = values["score"] / values["maximum"] if values["maximum"] else 0
         if fraction > 0:
-            draw.rounded_rectangle((bar[0], bar[1], bar[0] + int((bar[2] - bar[0]) * fraction), bar[3]), radius=9, fill=domain_accents[index])
+            draw.rounded_rectangle((bar[0], bar[1], bar[0] + int((bar[2] - bar[0]) * fraction), bar[3]), radius=12, fill=domain_accents[index])
 
         domain_items = [criterion for criterion in CRITERIA if criterion.domain == domain]
-        chip_x, chip_y = box[0] + 28, box[1] + 172
+        chip_x, chip_y = box[0] + 28, box[1] + 218
         for criterion in domain_items:
             value = result["scores"][criterion.code]
             if value is None:
@@ -1037,61 +1047,61 @@ def render_assessment_png(
                 chip_fill, chip_text = colors["green_pale"], f"{criterion.code} {value}/{criterion.maximum}"
             else:
                 chip_fill, chip_text = colors["gold_pale"], f"{criterion.code} {value}/{criterion.maximum}"
-            chip_w = 86 if len(chip_text) < 8 else 102
+            chip_w = 102 if len(chip_text) < 8 else 122
             if chip_x + chip_w > box[2] - 24:
                 chip_x = box[0] + 28
-                chip_y += 36
-            draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_w, chip_y + 28), radius=12, fill=chip_fill)
-            centered_text((chip_x, chip_y, chip_x + chip_w, chip_y + 28), chip_text, small_font, colors["ink"], padding=5)
+                chip_y += 48
+            draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_w, chip_y + 38), radius=14, fill=chip_fill)
+            centered_text((chip_x, chip_y, chip_x + chip_w, chip_y + 38), chip_text, small_font, colors["ink"], padding=5)
             chip_x += chip_w + 8
     branch(
         (900, domain_heading[3]),
         [((box[0] + box[2]) / 2, box[1]) for box in domain_boxes],
-        trunk_y=930,
+        trunk_y=1168,
     )
 
-    final_box = (280, 1262, 1520, 1442)
+    final_box = (240, 1602, 1560, 1818)
     merge(
         [((box[0] + box[2]) / 2, box[3]) for box in domain_boxes],
         (900, final_box[1]),
-        trunk_y=1232,
+        trunk_y=1565,
     )
     draw.rounded_rectangle((final_box[0] + 7, final_box[1] + 9, final_box[2] + 7, final_box[3] + 9), radius=27, fill=colors["shadow"])
     draw.rounded_rectangle(final_box, radius=27, fill=colors["paper"], outline=colors["teal"], width=4)
 
-    ring_box = (338, 1281, 482, 1425)
+    ring_box = (286, 1620, 466, 1800)
     draw.ellipse(ring_box, outline=colors["grey"], width=16)
     score_fraction = result["total"] / result["maximum"] if result["maximum"] else 0
     draw.arc(ring_box, start=-90, end=-90 + int(360 * score_fraction), fill=colors["cyan"], width=16)
-    ring_font = load_font(31, bold=True)
+    ring_font = load_font(40, bold=True)
     centered_text(ring_box, f"{result['total']}/{result['maximum']}", ring_font, colors["navy"], padding=8)
-    draw.text((518, 1285), "DARE-Arbo score", font=box_font, fill=colors["ink"])
+    draw.text((500, 1623), "DARE-Arbo score", font=box_font, fill=colors["ink"])
     status = "Assessment complete" if result["complete"] else f"Draft · {result['scored_count']}/{result['applicable_count']} items scored"
-    draw.text((518, 1326), status, font=body_font, fill=colors["teal"] if result["complete"] else colors["gold"])
-    centered_text((500, 1360, 745, 1407), "Continuous score\nNo official risk band", small_font, colors["muted"])
-    draw.line((770, 1284, 770, 1420), fill=colors["border"], width=2)
-    centered_text((806, 1283, 1188, 1338), str(classification.get("tier") or "Not tiered"), section_font, colors["navy"])
-    centered_text((806, 1338, 1188, 1414), str(classification.get("analysis_role") or "Retain as a distinct endpoint"), small_font, colors["muted"])
-    draw.rounded_rectangle((1212, 1294, 1468, 1410), radius=17, fill=colors["mint"], outline="#FCA5A5", width=2)
-    centered_text((1228, 1306, 1452, 1352), pathway.replace("_", " ").title(), box_font, colors["teal_dark"])
-    centered_text((1228, 1352, 1452, 1395), f"Applicable maximum: {result['maximum']}", small_font, colors["muted"])
+    draw.text((500, 1670), status, font=body_font, fill=colors["teal"] if result["complete"] else colors["gold"])
+    centered_text((486, 1714, 760, 1790), "Continuous score\nNo official risk band", small_font, colors["muted"])
+    draw.line((790, 1624, 790, 1798), fill=colors["border"], width=2)
+    centered_text((818, 1622, 1192, 1692), str(classification.get("tier") or "Not tiered"), section_font, colors["navy"])
+    centered_text((818, 1692, 1192, 1796), str(classification.get("analysis_role") or "Retain as a distinct endpoint"), small_font, colors["muted"])
+    draw.rounded_rectangle((1212, 1632, 1518, 1788), radius=17, fill=colors["mint"], outline="#FCA5A5", width=2)
+    centered_text((1228, 1646, 1502, 1712), pathway.replace("_", " ").title(), box_font, colors["teal_dark"])
+    centered_text((1228, 1712, 1502, 1770), f"Applicable maximum: {result['maximum']}", small_font, colors["muted"])
 
-    draw.text((72, 1492), "ITEM ATTAINMENT", font=small_font, fill=colors["navy"])
+    draw.text((72, 1853), "ITEM ATTAINMENT", font=small_font, fill=colors["navy"])
     legend_items = [
         (colors["green_pale"], "Maximum points"),
         (colors["gold_pale"], "Partial points"),
         (colors["red_pale"], "Zero points"),
         (colors["grey"], "Unscored / N/A"),
     ]
-    legend_x = 255
+    legend_x = 300
     for fill, label in legend_items:
-        draw.rounded_rectangle((legend_x, 1488, legend_x + 24, 1512), radius=8, fill=fill)
-        draw.text((legend_x + 34, 1491), label, font=small_font, fill=colors["muted"])
-        legend_x += 235
-    draw.text((1210, 1491), "Descriptive colors only — not RoB categories", font=small_font, fill=colors["muted"])
+        draw.rounded_rectangle((legend_x, 1848, legend_x + 28, 1876), radius=8, fill=fill)
+        draw.text((legend_x + 38, 1849), label, font=small_font, fill=colors["muted"])
+        legend_x += 248
+    draw.text((1270, 1849), "Descriptive colors only — not RoB categories", font=small_font, fill=colors["muted"])
 
     output = BytesIO()
-    canvas.save(output, format="PNG", optimize=True)
+    canvas.save(output, format="PNG", optimize=True, dpi=(180, 180))
     return output.getvalue()
 
 
@@ -1312,28 +1322,22 @@ def render_study_design_png(
     viruses = readiness["viruses"]
     surveillance_outputs = readiness["surveillance_outputs"]
     colors = resolve_overview_colors(presentation_colors)
-    width, height = 2000, 1500
+    width, height = 2000, 1750
     canvas = Image.new("RGB", (width, height), colors["background"])
     draw = ImageDraw.Draw(canvas)
 
     def font(size: int, bold: bool = False):
-        candidates = (
-            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
-            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-        )
-        for candidate in candidates:
-            try:
-                return ImageFont.truetype(candidate, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+        return _load_presentation_font(ImageFont, size, bold)
 
-    title_font = font(54, True)
-    subtitle_font = font(25)
-    heading_font = font(25, True)
-    body_font = font(20)
-    small_font = font(17)
-    metric_font = font(31, True)
+    # The figure is scaled to the available Streamlit column. These larger
+    # source sizes remain legible after browser-side downscaling and also
+    # produce presentation-ready downloaded graphics.
+    title_font = font(66, True)
+    subtitle_font = font(32)
+    heading_font = font(34, True)
+    body_font = font(29)
+    small_font = font(25)
+    metric_font = font(43, True)
 
     def wrap(text: str, selected_font: Any, max_width: int) -> list[str]:
         words = str(text or "Not specified").split()
@@ -1385,11 +1389,12 @@ def render_study_design_png(
             width=2,
         )
         draw.rectangle((box[0], box[1], box[0] + 12, box[3]), fill=accent)
-        draw.text((box[0] + 38, box[1] + 17), label, font=heading_font, fill=colors["ink"])
-        detail_y = box[1] + 58
+        draw.text((box[0] + 38, box[1] + 15), label, font=heading_font, fill=colors["ink"])
+        detail_y = box[1] + 65
+        detail_step = draw.textbbox((0, 0), "Ag", font=detail_font)[3] + 7
         for detail_line in wrap(detail, detail_font, box[2] - box[0] - 82)[:2]:
             draw.text((box[0] + 38, detail_y), detail_line, font=detail_font, fill=colors["muted"])
-            detail_y += 24
+            detail_y += detail_step
 
     draw.rectangle((0, 0, width, 176), fill=colors["charcoal"])
     draw.rectangle((0, 172, width, 176), fill=colors["teal"])
@@ -1439,7 +1444,7 @@ def render_study_design_png(
         assay_summaries.append(f"{endpoint_label}: {primary_assay} -> {confirmatory_assay}")
 
     node_x1, node_x2 = 245, 1755
-    node_height, gap = 105, 25
+    node_height, gap = 142, 24
     first_y = 292
     target_box = (node_x1, first_y, node_x2, first_y + node_height)
     flow_box(
@@ -1510,7 +1515,7 @@ def render_study_design_png(
         if index < len(full_nodes) - 1:
             arrow(y2 + 3, y2 + gap - 2)
 
-    pillar_y1, pillar_y2 = 1090, 1418
+    pillar_y1, pillar_y2 = 1300, 1680
     pillar_gap = 28
     pillar_width = (width - 144 - pillar_gap * 2) // 3
     pillar_accents = (colors["navy"], colors["teal"], colors["cyan"])
@@ -1519,28 +1524,28 @@ def render_study_design_png(
         x2 = x1 + pillar_width
         draw.rounded_rectangle((x1, pillar_y1, x2, pillar_y2), radius=18, fill=colors["paper"], outline=colors["border"], width=2)
         draw.rectangle((x1, pillar_y1, x2, pillar_y1 + 9), fill=accent)
-        draw.text((x1 + 28, pillar_y1 + 30), pillar, font=heading_font, fill=colors["ink"])
-        draw.text((x1 + 28, pillar_y1 + 75), f"{result['percentage']:.0f}%", font=metric_font, fill=accent)
-        bar = (x1 + 28, pillar_y1 + 127, x2 - 28, pillar_y1 + 151)
+        draw.text((x1 + 28, pillar_y1 + 28), pillar, font=heading_font, fill=colors["ink"])
+        draw.text((x1 + 28, pillar_y1 + 82), f"{result['percentage']:.0f}%", font=metric_font, fill=accent)
+        bar = (x1 + 28, pillar_y1 + 144, x2 - 28, pillar_y1 + 170)
         draw.rounded_rectangle(bar, radius=12, fill=colors["grey"])
         completed_x = bar[0] + round((bar[2] - bar[0]) * result["percentage"] / 100)
         if completed_x > bar[0]:
             draw.rounded_rectangle((bar[0], bar[1], completed_x, bar[3]), radius=12, fill=accent)
         missing = result["missing"][:2]
         if missing:
-            draw.text((x1 + 28, pillar_y1 + 178), "Next planning priorities", font=small_font, fill=colors["muted"])
-            cursor_y = pillar_y1 + 211
+            draw.text((x1 + 28, pillar_y1 + 198), "Next planning priorities", font=small_font, fill=colors["muted"])
+            cursor_y = pillar_y1 + 238
             for item in missing:
                 lines = wrap("• " + item, small_font, pillar_width - 56)
                 for line in lines[:2]:
                     draw.text((x1 + 28, cursor_y), line, font=small_font, fill=colors["ink"])
-                    cursor_y += 24
-                cursor_y += 5
+                    cursor_y += 31
+                cursor_y += 7
         else:
-            draw.text((x1 + 28, pillar_y1 + 190), "All listed planning elements documented.", font=small_font, fill=colors["green"])
+            draw.text((x1 + 28, pillar_y1 + 215), "All listed planning elements documented.", font=small_font, fill=colors["green"])
 
     draw.text(
-        (72, 1450),
+        (72, 1712),
         f"Planning coverage floor across the three pillars: {readiness['balance_floor']:.0f}% | This is a design aid, not a completed DARE-Arbo risk-of-bias score.",
         font=small_font,
         fill=colors["muted"],
@@ -1799,7 +1804,7 @@ def render_surveillance_design_report_pdf(
 
     story.extend([PageBreak(), section("3. Surveillance design flow")])
     try:
-        story.append(PdfImage(BytesIO(design_png), width=7.05 * inch, height=5.29 * inch))
+        story.append(PdfImage(BytesIO(design_png), width=7.05 * inch, height=6.17 * inch))
     except Exception:
         story.append(paragraph("The design flow image could not be embedded; use the separately downloadable PNG."))
     story.append(Spacer(1, 5))
