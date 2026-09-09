@@ -32,7 +32,7 @@ python -m unittest discover -s tests -v
 
 Uploaded PDFs are processed in memory and are not persisted by the app. Text-based PDFs work directly. Image-only/scanned articles require OCR before upload. Evidence suggestions use explicit, local rules and page-aware text matches; they are drafts that reviewers must verify against the article, tables, supplements, and stated target population.
 
-For a public deployment, add authentication and a persistence layer only if project storage is needed, deploy behind HTTPS, and establish a retention policy suitable for the uploaded literature.
+The DARE-Arbo digital workspace is a pre-release, non-production implementation developed for methodological evaluation, usability testing, and refinement of the DARE-Arbo framework. It should not yet be treated as a validated production system or relied upon as the sole basis for formal risk-of-bias decisions. Automated evidence suggestions and draft scores are decision-support outputs and require reviewer verification against the source study. Features, scoring logic, interface components, and export formats may change during further testing and validation.
 
 ## Primary framework sources in this directory
 
