@@ -1,0 +1,6 @@
+streamlit>=1.45,<2
+pandas>=2.2,<4
+altair>=5.5,<7
+pypdf>=6,<7
+Pillow>=10,<12
+reportlab>=4,<5
