@@ -765,7 +765,7 @@ def render_assessment_png(
     except ImportError as exc:  # pragma: no cover - declared runtime dependency
         raise RuntimeError("PNG rendering requires the 'Pillow' package.") from exc
 
-    width, height = 1800, 1900
+    width, height = 1800, 1950
     colors = resolve_overview_colors(presentation_colors)
     canvas = Image.new("RGB", (width, height), colors["background"])
     draw = ImageDraw.Draw(canvas)
@@ -779,8 +779,9 @@ def render_assessment_png(
     subtitle_font = load_font(32)
     section_font = load_font(35, bold=True)
     box_font = load_font(30, bold=True)
-    body_font = load_font(27)
-    small_font = load_font(23)
+    body_font = load_font(30)
+    endpoint_font = load_font(27)
+    small_font = load_font(27)
     score_font = load_font(82, bold=True)
 
     def wrapped_lines(text: str, font: Any, max_width: int) -> list[str]:
@@ -944,7 +945,7 @@ def render_assessment_png(
             selected=is_selected,
             fill=colors["navy"] if is_selected else colors["paper"],
             outline=colors["cyan"] if is_selected else colors["border"],
-            font=body_font,
+            font=endpoint_font,
         )
 
     branch(
@@ -1040,14 +1041,14 @@ def render_assessment_png(
         for criterion in domain_items:
             value = result["scores"][criterion.code]
             if value is None:
-                chip_fill, chip_text = colors["grey"], f"{criterion.code} N/A" if not criterion_is_applicable(criterion.code, pathway, endpoint_key) else f"{criterion.code} —"
+                chip_fill, chip_text = colors["grey"], f"{criterion.code} N/A" if not criterion_is_applicable(criterion.code, pathway, endpoint_key) else f"{criterion.code} -"
             elif value == 0:
                 chip_fill, chip_text = colors["red_pale"], f"{criterion.code} {value}/{criterion.maximum}"
             elif value == criterion.maximum:
                 chip_fill, chip_text = colors["green_pale"], f"{criterion.code} {value}/{criterion.maximum}"
             else:
                 chip_fill, chip_text = colors["gold_pale"], f"{criterion.code} {value}/{criterion.maximum}"
-            chip_w = 102 if len(chip_text) < 8 else 122
+            chip_w = 112 if len(chip_text) < 8 else 134
             if chip_x + chip_w > box[2] - 24:
                 chip_x = box[0] + 28
                 chip_y += 48
@@ -1097,8 +1098,8 @@ def render_assessment_png(
     for fill, label in legend_items:
         draw.rounded_rectangle((legend_x, 1848, legend_x + 28, 1876), radius=8, fill=fill)
         draw.text((legend_x + 38, 1849), label, font=small_font, fill=colors["muted"])
-        legend_x += 248
-    draw.text((1270, 1849), "Descriptive colors only — not RoB categories", font=small_font, fill=colors["muted"])
+        legend_x += 340
+    draw.text((72, 1903), "Descriptive colors show point attainment only | not official risk-of-bias categories", font=small_font, fill=colors["muted"])
 
     output = BytesIO()
     canvas.save(output, format="PNG", optimize=True, dpi=(180, 180))

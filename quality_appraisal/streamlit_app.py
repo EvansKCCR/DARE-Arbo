@@ -1453,7 +1453,7 @@ def single_results(
         caption="DARE-Arbo endpoint pathway, domain scores, item attainment, and synthesis classification.",
         width="stretch",
     )
-    st.caption("The maximum/partial/zero item colors describe points earned within each criterion; they are not official low/unclear/high risk-of-bias categories. PNG size: 1800 × 1900 px.")
+    st.caption("The maximum/partial/zero item colors describe points earned within each criterion; they are not official low/unclear/high risk-of-bias categories. PNG size: 1800 × 1950 px.")
 
     download_cols = st.columns([1, 1, 1, 1, 1])
     download_cols[0].download_button("Download PNG overview", png_bytes, f"{safe_name}_DARE-Arbo_overview.png", "image/png", use_container_width=True)
