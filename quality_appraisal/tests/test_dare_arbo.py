@@ -8,12 +8,16 @@ from dare_arbo import (
     ASSAY_OPTIONS_BY_SYNTHESIS_PATH,
     CRITERIA,
     POPULATION_TARGET_CATEGORIES,
+    Q4_USER_METHOD_SCORES,
+    SAMPLING_FRAME_CATEGORIES,
     SYNTHESIS_PATHS_BY_ENDPOINT,
     SYNTHESIS_PATHS_BY_KEY,
     Suggestion,
     applicable_maximum,
     audit_endpoint_counts,
     audit_synthesis_path_counts,
+    assess_target_frame_alignment,
+    assay_path_profile,
     build_export_record,
     classify_synthesis,
     criterion_is_applicable,
@@ -24,6 +28,7 @@ from dare_arbo import (
     render_study_design_png,
     render_surveillance_design_report_pdf,
     normalize_target_population_category,
+    normalize_sampling_frame_category,
     score_assessment,
     suggest_scores,
     validate_scores,
@@ -353,18 +358,19 @@ class DareArboScoringTests(unittest.TestCase):
         self.assertEqual(
             [label for label, _ in POPULATION_TARGET_CATEGORIES],
             [
-                "General febrile population",
-                "Community or general populations",
-                "Occupationally or zoonotically exposed populations",
                 "Suspected arbovirus population",
-                "Blood donors",
-                "Other or mixed populations",
-                "Pregnant women / antenatal populations",
                 "Non-malarial febrile population",
-                "Other defined clinical cohorts",
-                "Archived or residual specimen populations",
+                "General febrile population",
                 "Non-febrile patients",
                 "General outpatients",
+                "Pregnant women / antenatal populations",
+                "Blood donors",
+                "Occupationally / zoonotically exposed populations",
+                "Community or general populations",
+                "Other defined populations / cohorts",
+                "Underlying target unresolved - archived/residual specimens",
+                "Other / mixed populations",
+                "Unclear / insufficiently described",
             ],
         )
         specific = suggest_scores(
@@ -377,6 +383,41 @@ class DareArboScoringTests(unittest.TestCase):
             normalize_target_population_category("Antenatal or pregnant population"),
             "Pregnant women / antenatal populations",
         )
+
+    def test_design_library_sampling_frames_and_matrix_are_operational(self) -> None:
+        self.assertEqual(len(SAMPLING_FRAME_CATEGORIES), 15)
+        self.assertEqual(
+            normalize_sampling_frame_category(
+                "", "A household census list covered every enumeration area"
+            ),
+            "Population / Household Enumeration",
+        )
+        aligned = assess_target_frame_alignment(
+            "Community or general populations", "Population / Household Enumeration"
+        )
+        self.assertEqual(aligned["status"], "default-aligned")
+        warning = assess_target_frame_alignment(
+            "Community or general populations", "Outpatient Clinic Registry"
+        )
+        self.assertEqual(warning["status"], "mismatch-warning")
+
+    def test_design_library_q4_does_not_upgrade_multisite_label_alone(self) -> None:
+        self.assertIsNone(Q4_USER_METHOD_SCORES["Multisite recruitment"])
+        self.assertEqual(
+            Q4_USER_METHOD_SCORES[
+                "Structured multisite / sentinel capture without full probability sampling"
+            ],
+            2,
+        )
+
+    def test_assay_path_profile_separates_role_coverage_and_population(self) -> None:
+        profile = assay_path_profile("serology_tier_c")
+        self.assertEqual(profile["endpoint_structure"], "Staged verification estimator")
+        self.assertEqual(
+            profile["confirmation_coverage"],
+            "Predefined representative/random subset",
+        )
+        self.assertEqual(profile["measurement_pathway"], "Representative verification subsample")
 
     def test_population_dictionary_flags_restricted_sample_for_general_target(self) -> None:
         pages = [
@@ -538,6 +579,23 @@ class DareArboScoringTests(unittest.TestCase):
         self.assertEqual(draft["Q6a"].score, 4)
         self.assertEqual(draft["Q6b"].score, 1)
         self.assertEqual(draft["Q6c"].score, 0)
+
+    def test_repeat_pcr_is_not_independent_but_second_target_is(self) -> None:
+        repeat = suggest_scores(
+            ["All participants received the same RT-qPCR assay."],
+            "direct_detection", "confirmed_active", "full_population",
+            primary_assay="Real-time RT-qPCR",
+            confirmatory_assay="RT-PCR",
+        )
+        self.assertEqual(repeat["Q6a"].score, 4)
+        self.assertEqual(repeat["Q6c"].score, 0)
+        orthogonal = suggest_scores(
+            ["All participants received RT-qPCR and positives were confirmed using a second genomic target."],
+            "direct_detection", "confirmed_active", "full_population",
+            primary_assay="Real-time RT-qPCR",
+            confirmatory_assay="Second genomic target",
+        )
+        self.assertEqual(orthogonal["Q6c"].score, 2)
 
     def test_primary_neutralization_assay_does_not_self_confirm(self) -> None:
         pages = ["All participants were tested by PRNT90 using a validated reference protocol."]
@@ -767,8 +825,12 @@ class DareArboScoringTests(unittest.TestCase):
         from PIL import Image
 
         image = Image.open(BytesIO(png))
-        self.assertEqual(image.size, (1800, 1540))
+        self.assertEqual(image.size, (1800, 1950))
         self.assertEqual(image.getpixel((10, 10)), (18, 59, 93))
+        title_crop = image.crop((60, 20, 1400, 118)).convert("L")
+        bright_title = title_crop.point(lambda value: 255 if value > 225 else 0)
+        self.assertIsNotNone(bright_title.getbbox())
+        self.assertGreater(bright_title.getbbox()[3] - bright_title.getbbox()[1], 45)
 
     def test_png_overview_accepts_custom_presentation_colors(self) -> None:
         png = render_assessment_png(
@@ -849,6 +911,33 @@ class DareArboScoringTests(unittest.TestCase):
         self.assertLess(incomplete["pillars"]["Assay design"]["percentage"], 100)
         self.assertTrue(any("confirmatory" in item.lower() for item in incomplete["recommendations"]))
 
+    def test_study_designer_uses_controlled_target_frame_matrix(self) -> None:
+        base = {
+            "synthesis_path_key": "serology_apparent",
+            "target_population": "Residents in the study district",
+            "target_population_category": "Community or general populations",
+            "sampling_frame_category": "Outpatient Clinic Registry",
+            "sampling_recruitment_method": "Simple / systematic random selection within a defined frame",
+        }
+        unresolved = evaluate_study_design_plan(base)
+        self.assertEqual(
+            unresolved["target_frame_alignment"]["status"], "mismatch-warning"
+        )
+        self.assertIn(
+            "Sampling frame classified and aligned/justified for the target",
+            unresolved["pillars"]["Study design"]["missing"],
+        )
+        justified = evaluate_study_design_plan({
+            **base,
+            "sampling_frame_coverage_justification": (
+                "The declared target is explicitly restricted to attendees in the complete clinic catchment."
+            ),
+        })
+        self.assertNotIn(
+            "Sampling frame classified and aligned/justified for the target",
+            justified["pillars"]["Study design"]["missing"],
+        )
+
     def test_study_designer_png_is_high_resolution_and_downloadable(self) -> None:
         png = render_study_design_png(
             {
@@ -867,7 +956,11 @@ class DareArboScoringTests(unittest.TestCase):
         from PIL import Image
 
         image = Image.open(BytesIO(png))
-        self.assertEqual(image.size, (2000, 1500))
+        self.assertEqual(image.size, (2000, 1750))
+        title_crop = image.crop((60, 20, 1300, 110)).convert("L")
+        bright_title = title_crop.point(lambda value: 255 if value > 225 else 0)
+        self.assertIsNotNone(bright_title.getbbox())
+        self.assertGreater(bright_title.getbbox()[3] - bright_title.getbbox()[1], 40)
 
     def test_surveillance_study_design_report_is_auditable_pdf(self) -> None:
         plan = {
