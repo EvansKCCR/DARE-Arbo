@@ -33,8 +33,6 @@ python -m unittest discover -s tests -v
 
 Uploaded PDFs are processed in memory and are not persisted by the app. Text-based PDFs work directly. Image-only/scanned articles require OCR before upload. Evidence suggestions use explicit, local rules and page-aware text matches; they are drafts that reviewers must verify against the article, tables, supplements, and stated target population.
 
-For a public deployment, add authentication and a persistence layer only if project storage is needed, deploy behind HTTPS, and establish a retention policy suitable for the uploaded literature.
-
 ## Primary framework sources in this directory
 
 - `DARE_Arbo_Design_library.xlsx` - 2026-09-10 controlled target, frame, recruitment, Q1/Q3/Q4, matrix, and worked-example library.
