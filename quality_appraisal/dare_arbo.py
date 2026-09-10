@@ -777,14 +777,14 @@ def render_assessment_png(
 
     # Streamlit scales the complete overview to the available browser width.
     # Presentation-sized source type keeps every label readable after scaling.
-    title_font = load_font(70, bold=True)
-    subtitle_font = load_font(32)
-    section_font = load_font(35, bold=True)
-    box_font = load_font(30, bold=True)
-    body_font = load_font(30)
-    endpoint_font = load_font(27)
-    small_font = load_font(27)
-    score_font = load_font(82, bold=True)
+    title_font = load_font(72, bold=True)
+    subtitle_font = load_font(34)
+    section_font = load_font(38, bold=True)
+    box_font = load_font(32, bold=True)
+    body_font = load_font(31)
+    endpoint_font = load_font(31, bold=True)
+    small_font = load_font(28)
+    score_font = load_font(84, bold=True)
 
     def wrapped_lines(text: str, font: Any, max_width: int) -> list[str]:
         words = str(text).split()
@@ -927,20 +927,40 @@ def render_assessment_png(
     draw.rounded_rectangle((68, 207, 68 + meta_width, 259), radius=18, fill=colors["paper"], outline=colors["border"], width=2)
     draw.text((88, 216), meta_text, font=body_font, fill=colors["muted"])
 
-    entry_box = (690, 286, 1110, 378)
+    entry_box = (690, 282, 1110, 370)
     rounded_box(entry_box, "Assessment entry")
-    draw.text((72, 416), "1. Synthesis endpoint", font=section_font, fill=colors["ink"])
+    draw.text((72, 395), "1. Synthesis endpoint", font=section_font, fill=colors["ink"])
 
     endpoint_options = [endpoint.label for endpoint in ENDPOINTS]
-    option_gap = 10
-    option_width = (width - 144 - option_gap * (len(endpoint_options) - 1)) // len(endpoint_options)
+    endpoint_display_labels = {
+        "Prior exposure / antibody seroprevalence": "Prior exposure / antibody prevalence",
+        "Presumptive recent infection - IgM": "Presumptive recent infection · IgM",
+        "Presumptive active infection - NS1 antigen": "Presumptive active infection · NS1",
+        "Mixed / inseparable serologic evidence": "Mixed / inseparable serologic evidence",
+        "Confirmed active infection - direct viral detection": "Confirmed active infection · direct detection",
+        "Neutralizing-antibody prevalence": "Neutralizing-antibody prevalence",
+        "Assay performance endpoint": "Assay-performance endpoint",
+        "Other explicitly defined endpoint": "Other explicitly defined endpoint",
+    }
+    endpoint_panel = (58, 448, 1742, 724)
+    draw.rounded_rectangle(
+        endpoint_panel,
+        radius=24,
+        fill=colors["paper"],
+        outline=colors["border"],
+        width=2,
+    )
+    option_gap = 18
+    option_width = (endpoint_panel[2] - endpoint_panel[0] - 36 - option_gap * 3) // 4
     endpoint_boxes: list[tuple[int, int, int, int]] = []
     for index, option in enumerate(endpoint_options):
-        x1 = 72 + index * (option_width + option_gap)
-        box = (x1, 472, x1 + option_width, 618)
+        row, column = divmod(index, 4)
+        x1 = endpoint_panel[0] + 18 + column * (option_width + option_gap)
+        y1 = endpoint_panel[1] + 18 + row * 128
+        box = (x1, y1, x1 + option_width, y1 + 108)
         endpoint_boxes.append(box)
         is_selected = option == endpoint_label
-        display_option = re.sub(r"(?<=\w)-(?=\w)", "- ", option)
+        display_option = endpoint_display_labels.get(option, option)
         rounded_box(
             box,
             display_option,
@@ -950,32 +970,14 @@ def render_assessment_png(
             font=endpoint_font,
         )
 
-    branch(
-        (900, entry_box[3]),
-        [((box[0] + box[2]) / 2, box[1]) for box in endpoint_boxes],
-        trunk_y=448,
-    )
-
-    selected_endpoint = next(
-        (box for option, box in zip(endpoint_options, endpoint_boxes) if option == endpoint_label),
-        endpoint_boxes[-1],
-    )
-    pathway_heading = (660, 690, 1140, 782)
-    selected_endpoint_x = (selected_endpoint[0] + selected_endpoint[2]) / 2
-    poly_arrow(
-        [
-            (selected_endpoint_x, selected_endpoint[3]),
-            (selected_endpoint_x, 654),
-            (900, 654),
-            (900, pathway_heading[1]),
-        ],
-        fill=colors["teal"],
-    )
+    arrow((900, entry_box[3]), (900, endpoint_panel[1]))
+    pathway_heading = (660, 772, 1140, 856)
+    arrow((900, endpoint_panel[3]), (900, pathway_heading[1]), fill=colors["teal"])
     rounded_box(pathway_heading, "2. DARE measurement pathway")
 
     pathway_boxes = {
-        "serologic": (340, 852, 820, 974),
-        "direct_detection": (980, 852, 1460, 974),
+        "serologic": (300, 920, 820, 1032),
+        "direct_detection": (980, 920, 1500, 1032),
     }
     serologic_pathway_label = (
         "Test-adjusted endpoint · Q10 applies · max 19"
@@ -995,17 +997,17 @@ def render_assessment_png(
     branch(
         (900, pathway_heading[3]),
         [((box[0] + box[2]) / 2, box[1]) for box in pathway_boxes.values()],
-        trunk_y=820,
+        trunk_y=888,
     )
 
     selected_pathway = pathway_boxes[pathway]
-    domain_heading = (660, 1040, 1140, 1132)
+    domain_heading = (660, 1080, 1140, 1164)
     selected_pathway_x = (selected_pathway[0] + selected_pathway[2]) / 2
     poly_arrow(
         [
             (selected_pathway_x, selected_pathway[3]),
-            (selected_pathway_x, 1008),
-            (900, 1008),
+            (selected_pathway_x, 1055),
+            (900, 1055),
             (900, domain_heading[1]),
         ],
         fill=colors["teal"],
@@ -1019,7 +1021,7 @@ def render_assessment_png(
     domain_tints = [colors["blue_pale"], colors["purple_pale"], colors["mint"], colors["gold_pale"]]
     for index, domain in enumerate(DOMAINS):
         x1 = 72 + index * (domain_width + domain_gap)
-        box = (x1, 1202, x1 + domain_width, 1528)
+        box = (x1, 1225, x1 + domain_width, 1534)
         domain_boxes.append(box)
         values = result["domains"][domain]
         shadow_box = (box[0] + 5, box[1] + 7, box[2] + 5, box[3] + 7)
@@ -1050,7 +1052,8 @@ def render_assessment_png(
                 chip_fill, chip_text = colors["green_pale"], f"{criterion.code} {value}/{criterion.maximum}"
             else:
                 chip_fill, chip_text = colors["gold_pale"], f"{criterion.code} {value}/{criterion.maximum}"
-            chip_w = 112 if len(chip_text) < 8 else 134
+            chip_text_width = draw.textbbox((0, 0), chip_text, font=small_font)[2]
+            chip_w = max(112, min(154, chip_text_width + 30))
             if chip_x + chip_w > box[2] - 24:
                 chip_x = box[0] + 28
                 chip_y += 48
@@ -1060,34 +1063,34 @@ def render_assessment_png(
     branch(
         (900, domain_heading[3]),
         [((box[0] + box[2]) / 2, box[1]) for box in domain_boxes],
-        trunk_y=1168,
+        trunk_y=1195,
     )
 
-    final_box = (240, 1602, 1560, 1818)
+    final_box = (220, 1602, 1580, 1818)
     merge(
         [((box[0] + box[2]) / 2, box[3]) for box in domain_boxes],
         (900, final_box[1]),
-        trunk_y=1565,
+        trunk_y=1568,
     )
     draw.rounded_rectangle((final_box[0] + 7, final_box[1] + 9, final_box[2] + 7, final_box[3] + 9), radius=27, fill=colors["shadow"])
     draw.rounded_rectangle(final_box, radius=27, fill=colors["paper"], outline=colors["teal"], width=4)
 
-    ring_box = (286, 1620, 466, 1800)
+    ring_box = (270, 1620, 450, 1800)
     draw.ellipse(ring_box, outline=colors["grey"], width=16)
     score_fraction = result["total"] / result["maximum"] if result["maximum"] else 0
     draw.arc(ring_box, start=-90, end=-90 + int(360 * score_fraction), fill=colors["cyan"], width=16)
-    ring_font = load_font(40, bold=True)
+    ring_font = load_font(44, bold=True)
     centered_text(ring_box, f"{result['total']}/{result['maximum']}", ring_font, colors["navy"], padding=8)
-    draw.text((500, 1623), "DARE-Arbo score", font=box_font, fill=colors["ink"])
+    draw.text((486, 1623), "DARE-Arbo score", font=box_font, fill=colors["ink"])
     status = "Assessment complete" if result["complete"] else f"Draft · {result['scored_count']}/{result['applicable_count']} items scored"
-    draw.text((500, 1670), status, font=body_font, fill=colors["teal"] if result["complete"] else colors["gold"])
-    centered_text((486, 1714, 760, 1790), "Continuous score\nNo official risk band", small_font, colors["muted"])
+    draw.text((486, 1670), status, font=body_font, fill=colors["teal"] if result["complete"] else colors["gold"])
+    centered_text((470, 1714, 770, 1790), "Continuous score\nNo official risk band", small_font, colors["muted"])
     draw.line((790, 1624, 790, 1798), fill=colors["border"], width=2)
-    centered_text((818, 1622, 1192, 1692), str(classification.get("tier") or "Not tiered"), section_font, colors["navy"])
-    centered_text((818, 1692, 1192, 1796), str(classification.get("analysis_role") or "Retain as a distinct endpoint"), small_font, colors["muted"])
-    draw.rounded_rectangle((1212, 1632, 1518, 1788), radius=17, fill=colors["mint"], outline="#FCA5A5", width=2)
-    centered_text((1228, 1646, 1502, 1712), pathway.replace("_", " ").title(), box_font, colors["teal_dark"])
-    centered_text((1228, 1712, 1502, 1770), f"Applicable maximum: {result['maximum']}", small_font, colors["muted"])
+    centered_text((818, 1622, 1204, 1692), str(classification.get("tier") or "Not tiered"), section_font, colors["navy"])
+    centered_text((818, 1692, 1204, 1796), str(classification.get("analysis_role") or "Retain as a distinct endpoint"), small_font, colors["muted"])
+    draw.rounded_rectangle((1224, 1632, 1542, 1788), radius=17, fill=colors["mint"], outline="#FCA5A5", width=2)
+    centered_text((1240, 1646, 1526, 1712), pathway.replace("_", " ").title(), box_font, colors["teal_dark"])
+    centered_text((1240, 1712, 1526, 1770), f"Applicable maximum: {result['maximum']}", small_font, colors["muted"])
 
     draw.text((72, 1853), "ITEM ATTAINMENT", font=small_font, fill=colors["navy"])
     legend_items = [
