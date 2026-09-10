@@ -20,6 +20,25 @@ import pandas as pd
 from PIL import Image
 import streamlit as st
 
+EXPECTED_CORE_API_VERSION = "2026.09.10.1"
+try:
+    from dare_arbo import CORE_API_VERSION
+except ImportError:
+    st.error(
+        "DARE-Arbo deployment files are out of sync. The deployed streamlit_app.py "
+        "requires the matching updated dare_arbo.py. Deploy both files from the same "
+        "revision, then reboot the Streamlit app."
+    )
+    st.stop()
+
+if CORE_API_VERSION != EXPECTED_CORE_API_VERSION:
+    st.error(
+        "DARE-Arbo deployment version mismatch: "
+        f"interface expects core {EXPECTED_CORE_API_VERSION}, but loaded {CORE_API_VERSION}. "
+        "Deploy streamlit_app.py and dare_arbo.py together, then reboot the app."
+    )
+    st.stop()
+
 from dare_arbo import (
     ASSAY_OPTIONS_BY_SYNTHESIS_PATH,
     CRITERIA,

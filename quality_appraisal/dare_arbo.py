@@ -15,6 +15,8 @@ import re
 from typing import Any, BinaryIO, Iterable, Mapping
 
 
+CORE_API_VERSION = "2026.09.10.1"
+
 GUIDE_VERSION = (
     "DARE-Arbo endpoint-first application principle + Design Library rules "
     "(workspace version, 2026-09-10)"
