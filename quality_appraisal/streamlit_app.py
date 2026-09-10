@@ -31,12 +31,15 @@ from dare_arbo import (
     OVERVIEW_COLOR_PRESETS,
     POPULATION_TARGET_CATEGORIES,
     Q4_USER_METHOD_SCORES,
+    SAMPLING_FRAME_CATEGORIES,
     SYNTHESIS_PATHS_BY_ENDPOINT,
     SYNTHESIS_PATHS_BY_KEY,
     VERIFICATION_DESIGNS,
     applicable_maximum,
     audit_endpoint_counts,
     audit_synthesis_path_counts,
+    assess_target_frame_alignment,
+    assay_path_profile,
     build_export_record,
     classify_synthesis,
     criterion_is_applicable,
@@ -48,6 +51,7 @@ from dare_arbo import (
     render_study_design_png,
     render_surveillance_design_report_pdf,
     normalize_target_population_category,
+    normalize_sampling_frame_category,
     score_assessment,
     suggest_scores,
 )
@@ -83,6 +87,7 @@ SYNTHESIS_ENDPOINT_ORDER = (
     "assay_performance",
 )
 TARGET_POPULATION_CATEGORY_OPTIONS = [label for label, _ in POPULATION_TARGET_CATEGORIES]
+SAMPLING_FRAME_CATEGORY_OPTIONS = [label for label, _ in SAMPLING_FRAME_CATEGORIES]
 ACHIEVED_REPRESENTATION_OPTIONS = (
     "Not reported / unclear",
     "Adequate within the defined target population",
@@ -380,6 +385,7 @@ def initialize_state() -> None:
         "pathway_selector": ENDPOINTS[0].default_pathway,
         "verification_selector": "full_population",
         "synthesis_path_selector": "serology_apparent",
+        "sampling_frame_category": "",
         "page_background_color": "#F4F7F5",
     }
     for key, value in defaults.items():
@@ -399,10 +405,14 @@ def empty_batch_row() -> dict[str, Any]:
         "Target-population category": "",
         "Achieved sample representation": ACHIEVED_REPRESENTATION_OPTIONS[0],
         "Sampling frame / source population": "",
+        "Sampling-frame category": "",
         "Sampling/recruitment method": "",
         "Primary assay": "",
         "Confirmatory assay": "",
         "Assay role": "",
+        "Endpoint structure": "",
+        "Confirmation role": "",
+        "Confirmation coverage": "",
         "Assay validation / QC": "Not reported / unclear",
         "Endpoint procedure consistency": ENDPOINT_CONSISTENCY_OPTIONS[0],
         "Assay-performance correction": "Not reported / no explicit correction",
@@ -584,6 +594,9 @@ def refresh_draft_suggestions(
         sampling_frame_description=str(
             st.session_state.get("sampling_frame_description") or ""
         ),
+        sampling_frame_category=str(
+            st.session_state.get("sampling_frame_category") or ""
+        ),
         sampling_recruitment_method=str(
             st.session_state.get("sampling_recruitment_method") or ""
         ),
@@ -614,6 +627,18 @@ def sync_target_population_suggestion() -> None:
 
 def sync_sampling_method_suggestion() -> None:
     """Refresh Q4 after the reviewer changes its dictionary fallback entry."""
+    sync_target_population_suggestion()
+
+
+def sync_sampling_frame_suggestion() -> None:
+    """Infer a controlled frame from reviewer text, then refresh Q3."""
+    current = str(st.session_state.get("sampling_frame_category") or "")
+    if not current:
+        inferred = normalize_sampling_frame_category(
+            "", str(st.session_state.get("sampling_frame_description") or "")
+        )
+        if inferred:
+            st.session_state["sampling_frame_category"] = inferred
     sync_target_population_suggestion()
 
 
@@ -843,8 +868,31 @@ def document_intake(
             placeholder="Describe the source list, communities, facilities, surveillance system, registry, biobank, or other frame from which eligible members could be identified.",
             height=82,
             key="sampling_frame_description",
-            on_change=sync_target_population_suggestion,
+            on_change=sync_sampling_frame_suggestion,
             help="The Target population entry alone cannot earn Q3. This field supplies the missing frame evidence when the PDF does not.",
+        )
+        current_frame_category = str(
+            st.session_state.get("sampling_frame_category") or ""
+        )
+        normalized_frame_category = normalize_sampling_frame_category(
+            current_frame_category, sampling_frame_description
+        )
+        if current_frame_category not in ([""] + SAMPLING_FRAME_CATEGORY_OPTIONS):
+            st.session_state["sampling_frame_category"] = normalized_frame_category or ""
+        sampling_frame_category = st.selectbox(
+            "Sampling-frame category",
+            options=[""] + SAMPLING_FRAME_CATEGORY_OPTIONS,
+            format_func=lambda value: "Classify the operational source frame" if not value else value,
+            key="sampling_frame_category",
+            on_change=sync_target_population_suggestion,
+            help="Classify the list, registry, service, surveillance system, cohort, enumeration system, or operational specimen source from which participants could enter. The laboratory is a frame only when it supplied the specimens, not merely because testing occurred there.",
+        )
+        frame_alignment = assess_target_frame_alignment(
+            target_population_category, sampling_frame_category
+        )
+        st.caption(
+            f"Target–frame matrix: {frame_alignment['status'].replace('-', ' ')}. "
+            f"{frame_alignment['rationale']}"
         )
         sampling_recruitment_method = st.selectbox(
             "Q4 fallback: sampling and recruitment method",
@@ -935,6 +983,7 @@ def document_intake(
         endpoint_classification = classify_synthesis(
             synthesis_path.endpoint_key, synthesis_path.verification_design
         )
+        path_profile = assay_path_profile(synthesis_path_key)
         endpoint_defining_assay = (
             f"{primary_assay} → {confirmatory_assay}"
             if "staged" in endpoint_classification["assay_role"].lower()
@@ -947,7 +996,10 @@ def document_intake(
             else ""
         )
         st.caption(
-            f"Assay role: {endpoint_classification['assay_role']}. "
+            f"Endpoint structure: {path_profile['endpoint_structure']}. "
+            f"Primary role: {path_profile['primary_assay_role']}. "
+            f"Confirmation role: {path_profile['confirmation_role']}. "
+            f"Coverage: {path_profile['confirmation_coverage']}. "
             + (
                 f"Endpoint-defining assay/algorithm: {endpoint_defining_assay}."
                 if endpoint_defining_assay else
@@ -1021,6 +1073,7 @@ def document_intake(
                             target_population_category=target_population_category,
                             achieved_sample_representation=achieved_sample_representation,
                             sampling_frame_description=sampling_frame_description,
+                            sampling_frame_category=sampling_frame_category,
                             sampling_recruitment_method=sampling_recruitment_method,
                             endpoint_procedure_consistency=endpoint_procedure_consistency,
                             primary_assay=primary_assay,
@@ -1075,12 +1128,17 @@ def document_intake(
         "target_population_category": target_population_category,
         "achieved_sample_representation": achieved_sample_representation,
         "sampling_frame_description": sampling_frame_description,
+        "sampling_frame_category": sampling_frame_category,
         "sampling_recruitment_method": sampling_recruitment_method,
         "primary_assay": primary_assay,
         "confirmatory_assay": confirmatory_assay,
         "primary_assay_choice": primary_assay_choice,
         "confirmatory_assay_choices": resolved_confirmatory_assays,
-        "assay_role": endpoint_classification["assay_role"],
+        "endpoint_structure": path_profile["endpoint_structure"],
+        "assay_role": path_profile["primary_assay_role"],
+        "confirmation_role": path_profile["confirmation_role"],
+        "confirmation_coverage": path_profile["confirmation_coverage"],
+        "endpoint_testing_population_class": path_profile["measurement_pathway"],
         "endpoint_defining_assay": endpoint_defining_assay,
         "supporting_confirmation_assay": supporting_assay,
         "testing_population": testing_verification_population or synthesis_path.testing_strategy,
@@ -1163,7 +1221,6 @@ def criterion_panel(criterion: Any, pathway: str, endpoint_key: str) -> None:
             placeholder="Record the exact reported feature that supports this score.",
             height=105,
         )
-
     with st.expander("Operational scoring rules and extracted evidence"):
         for score, rule in criterion.rules.items():
             st.markdown(f"**{score}:** {rule}")
@@ -1583,6 +1640,8 @@ def workbook_rows_to_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
         record: dict[str, Any] = {
             "study_id": study_id,
             "target_population": row.get("Target population"),
+            "target_population_category": row.get("Target-population category"),
+            "sampling_frame_category": row.get("Sampling-frame category"),
             "endpoint_key": endpoint_key,
             "endpoint_label": ENDPOINTS_BY_KEY[endpoint_key].label,
             "testing_population": row.get("Testing pathway"),
@@ -1640,12 +1699,19 @@ def registry_records_to_batch_frame(records: list[dict[str, Any]]) -> pd.DataFra
         row["Sampling frame / source population"] = str(
             clean(record.get("sampling_frame_description")) or ""
         ).strip()
+        row["Sampling-frame category"] = normalize_sampling_frame_category(
+            str(clean(record.get("sampling_frame_category")) or ""),
+            row["Sampling frame / source population"],
+        ) or ""
         row["Sampling/recruitment method"] = str(
             clean(record.get("sampling_recruitment_method")) or ""
         ).strip()
         row["Primary assay"] = str(clean(record.get("primary_assay")) or "").strip()
         row["Confirmatory assay"] = str(clean(record.get("confirmatory_assay")) or "").strip()
         row["Assay role"] = str(clean(record.get("assay_role")) or "").strip()
+        row["Endpoint structure"] = str(clean(record.get("endpoint_structure")) or "").strip()
+        row["Confirmation role"] = str(clean(record.get("confirmation_role")) or "").strip()
+        row["Confirmation coverage"] = str(clean(record.get("confirmation_coverage")) or "").strip()
         row["Endpoint procedure consistency"] = str(
             clean(record.get("endpoint_procedure_consistency")) or ENDPOINT_CONSISTENCY_OPTIONS[0]
         ).strip()
@@ -1764,6 +1830,10 @@ def batch_editor() -> pd.DataFrame:
         "Sampling frame / source population": st.column_config.TextColumn(
             help="Actual source frame for Q3; the target label alone is insufficient."
         ),
+        "Sampling-frame category": st.column_config.SelectboxColumn(
+            options=[""] + SAMPLING_FRAME_CATEGORY_OPTIONS,
+            help="Controlled operational source-frame class from the 2026-09-10 Design Library.",
+        ),
         "Sampling/recruitment method": st.column_config.SelectboxColumn(
             options=[""] + list(Q4_USER_METHOD_SCORES),
             help="Dictionary fallback for Q4 when document evidence is unavailable.",
@@ -1771,6 +1841,9 @@ def batch_editor() -> pd.DataFrame:
         "Primary assay": st.column_config.TextColumn(),
         "Confirmatory assay": st.column_config.TextColumn(),
         "Assay role": st.column_config.TextColumn(disabled=True),
+        "Endpoint structure": st.column_config.TextColumn(disabled=True),
+        "Confirmation role": st.column_config.TextColumn(disabled=True),
+        "Confirmation coverage": st.column_config.TextColumn(disabled=True),
         "Assay validation / QC": st.column_config.SelectboxColumn(
             options=["Not reported / unclear", "Validated, standardized, or appropriate controls reported"],
             help="Structured Q6b input.",
@@ -1781,7 +1854,7 @@ def batch_editor() -> pd.DataFrame:
         ),
         "Assay-performance correction": st.column_config.SelectboxColumn(
             options=["Not reported / no explicit correction", "Explicit sensitivity/specificity correction"],
-            help="Q10 applies only to primary-assay prior-exposure / binding-antibody prevalence.",
+            help="Q10 applies to prior-exposure primary-antibody, IgM, and NS1 endpoints; it is N/A for the other implemented endpoint categories.",
         ),
         "Synthesis path": st.column_config.SelectboxColumn(options=list(SYNTHESIS_PATH_LABELS), required=True),
         "Endpoint": st.column_config.SelectboxColumn(options=list(ENDPOINT_LABELS), required=True),
@@ -1825,7 +1898,7 @@ def batch_editor() -> pd.DataFrame:
         column_config=column_config,
         column_order=[
             "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
-            "Achieved sample representation", "Sampling frame / source population", "Sampling/recruitment method",
+            "Achieved sample representation", "Sampling frame / source population", "Sampling-frame category", "Sampling/recruitment method",
             "Primary assay", "Confirmatory assay", "Assay validation / QC",
             "Endpoint procedure consistency", "Assay-performance correction", "Synthesis path",
             *[label for label, _ in PATH_COUNT_FIELDS.values()],
@@ -1940,10 +2013,17 @@ def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             endpoint_key = synthesis_path.endpoint_key
             pathway = ENDPOINTS_BY_KEY[endpoint_key].default_pathway
             design_key = synthesis_path.verification_design
+            path_profile = assay_path_profile(synthesis_path_key)
         else:
             endpoint_key = ENDPOINT_LABELS.get(row.get("Endpoint"), "other")
             pathway = PATHWAYS_BY_LABEL.get(row.get("Measurement pathway"), ENDPOINTS_BY_KEY[endpoint_key].default_pathway)
             design_key = reverse_design.get(row.get("Verification design"))
+            path_profile = {
+                "endpoint_structure": str(row.get("Endpoint structure") or ""),
+                "primary_assay_role": str(row.get("Assay role") or ""),
+                "confirmation_role": str(row.get("Confirmation role") or ""),
+                "confirmation_coverage": str(row.get("Confirmation coverage") or ""),
+            }
         raw_scores = {criterion.code: row.get(criterion.code) for criterion in CRITERIA}
         scores = {
             code: None if pd.isna(value) else int(value)
@@ -2001,6 +2081,7 @@ def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             target_population_category=str(row.get("Target-population category") or ""),
             achieved_sample_representation=str(row.get("Achieved sample representation") or ""),
             sampling_frame_description=str(row.get("Sampling frame / source population") or ""),
+            sampling_frame_category=str(row.get("Sampling-frame category") or ""),
             sampling_recruitment_method=q4_fallback_method,
             endpoint_procedure_consistency=str(row.get("Endpoint procedure consistency") or ""),
             primary_assay=str(row.get("Primary assay") or ""),
@@ -2026,19 +2107,36 @@ def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         measurement_flags = [
             code for code in ("Q6a", "Q6b", "Q6c", "Q7") if result["scores"].get(code) == 0
         ]
+        normalized_batch_target = normalize_target_population_category(
+            str(row.get("Target-population category") or ""),
+            str(row.get("Target population") or ""),
+        ) or ""
+        normalized_batch_frame = normalize_sampling_frame_category(
+            str(row.get("Sampling-frame category") or ""),
+            str(row.get("Sampling frame / source population") or ""),
+        ) or ""
+        batch_frame_alignment = assess_target_frame_alignment(
+            normalized_batch_target, normalized_batch_frame
+        )
         detail = {
             "Study ID": study_id,
             "Citation or DOI": row.get("Citation or DOI", ""),
             "Virus": row.get("Virus", ""),
             "Target population": row.get("Target population", ""),
-            "Target-population category": row.get("Target-population category", ""),
+            "Target-population category": normalized_batch_target,
             "Achieved sample representation": row.get("Achieved sample representation", ""),
             "Sampling frame / source population": row.get("Sampling frame / source population", ""),
+            "Sampling-frame category": normalized_batch_frame,
+            "Target-frame matrix status": batch_frame_alignment["status"],
+            "Target-frame matrix rationale": batch_frame_alignment["rationale"],
             "Sampling/recruitment method": q4_fallback_method,
             "Endpoint": ENDPOINTS_BY_KEY[endpoint_key].label,
             "Primary assay": row.get("Primary assay", ""),
             "Confirmatory assay": row.get("Confirmatory assay", ""),
-            "Assay role": classification["assay_role"],
+            "Endpoint structure": path_profile.get("endpoint_structure", ""),
+            "Assay role": path_profile.get("primary_assay_role") or classification["assay_role"],
+            "Confirmation role": path_profile.get("confirmation_role", ""),
+            "Confirmation coverage": path_profile.get("confirmation_coverage", ""),
             "Endpoint procedure consistency": row.get("Endpoint procedure consistency", ""),
             "Testing strategy": synthesis_path.testing_strategy if synthesis_path else row.get("Testing/verification population", ""),
             "Assay type": synthesis_path.assay_type if synthesis_path else row.get("Endpoint-defining assay", ""),
@@ -2132,7 +2230,7 @@ def appraiser_page() -> None:
     if registry:
         with st.expander(f"In-session Assessor registry ({len(registry)} records)", expanded=True):
             registry_df = pd.DataFrame(registry)
-            preferred = [column for column in ["study_id", "virus", "endpoint_label", "synthesis_tier", "dare_total", "dare_applicable_maximum", "dare_complete"] if column in registry_df.columns]
+            preferred = [column for column in ["study_id", "virus", "target_population_category", "sampling_frame_category", "endpoint_label", "synthesis_tier", "dare_total", "dare_applicable_maximum", "dare_complete"] if column in registry_df.columns]
             st.dataframe(registry_df[preferred] if preferred else registry_df, use_container_width=True, hide_index=True)
             registry_cols = st.columns([1, 1, 1.45, 1])
             registry_cols[0].download_button("Download registry CSV", registry_df.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_registry.csv", "text/csv", use_container_width=True)
@@ -2186,8 +2284,9 @@ def appraiser_page() -> None:
     export_cols = st.columns(3)
     export_cols[0].download_button("Download batch details", details.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_batch_details.csv", "text/csv", use_container_width=True)
     summary_columns = [
-        "Study ID", "Citation or DOI", "Virus", "Target population", "Sampling/recruitment method", "Endpoint",
-        "Primary assay", "Confirmatory assay", "Testing strategy", "Assay type",
+        "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
+        "Sampling frame / source population", "Sampling-frame category", "Target-frame matrix status", "Target-frame matrix rationale", "Sampling/recruitment method", "Endpoint",
+        "Endpoint structure", "Primary assay", "Confirmatory assay", "Assay role", "Confirmation role", "Confirmation coverage", "Testing strategy", "Assay type",
         "Summary estimator", "Numerator provenance",
         "Synthesis tier", "Effective synthesis tier", "Synthesis eligibility",
         "Numerator rule", "Denominator rule", "False-positive rule",
@@ -2254,6 +2353,13 @@ def study_designer_page() -> None:
             key="designer_target_population",
             placeholder="Define geography, age, clinical/exposure status, and intended inference.",
             height=105,
+        )
+        target_population_category = st.selectbox(
+            "Target-population category",
+            options=[""] + TARGET_POPULATION_CATEGORY_OPTIONS,
+            format_func=lambda value: "Classify the planned target" if not value else value,
+            key="designer_target_population_category",
+            help="The Designer judges representation and frame coverage against this explicit study-virus-estimand target, not against a national population by default.",
         )
         surveillance_mode = st.selectbox(
             "Surveillance mode",
@@ -2389,6 +2495,29 @@ def study_designer_page() -> None:
         ("Study design", "Assay design", "Standard reporting")
     )
     with design_tab:
+        sampling_frame_category = st.selectbox(
+            "Sampling-frame category",
+            options=[""] + SAMPLING_FRAME_CATEGORY_OPTIONS,
+            format_func=lambda value: "Select the operational source frame" if not value else value,
+            key="designer_sampling_frame_category",
+            help="Identify the list, registry, network, roster, enumeration system, or operational specimen source from which eligible units can enter.",
+        )
+        target_frame_alignment = assess_target_frame_alignment(
+            target_population_category, sampling_frame_category
+        )
+        if target_frame_alignment["status"] == "default-aligned":
+            st.success(target_frame_alignment["rationale"])
+        elif target_frame_alignment["status"] == "unresolved":
+            st.info(target_frame_alignment["rationale"])
+        else:
+            st.warning(target_frame_alignment["rationale"])
+        sampling_frame_coverage_justification = st.text_area(
+            "Sampling-frame coverage and catchment justification",
+            key="designer_sampling_frame_coverage_justification",
+            placeholder="Explain geography, service catchment, eligibility coverage, source-system completeness, and any known undercoverage.",
+            height=86,
+            help="Required when the Target-Frame Matrix does not identify a default structural match. The matrix supports—but never replaces—study-specific judgement.",
+        )
         sampling_recruitment_method = st.selectbox(
             "Sampling and recruitment method",
             options=[""] + list(Q4_USER_METHOD_SCORES),
@@ -2396,19 +2525,19 @@ def study_designer_page() -> None:
             key="designer_sampling_method",
         )
         design_cols = st.columns(2)
-        sampling_frame_defined = design_cols[0].checkbox(
-            "Sampling frame is defined and aligned with the target population",
-            key="designer_sampling_frame",
+        sampling_frame_defined = bool(sampling_frame_category) and (
+            target_frame_alignment["status"] == "default-aligned"
+            or bool(sampling_frame_coverage_justification.strip())
         )
-        eligibility_defined = design_cols[1].checkbox(
+        eligibility_defined = design_cols[0].checkbox(
             "Eligibility and exclusion criteria are prespecified",
             key="designer_eligibility",
         )
-        sample_size_rationale = design_cols[0].checkbox(
+        sample_size_rationale = design_cols[1].checkbox(
             "Sample-size rationale accounts for precision/design effects",
             key="designer_sample_size_rationale",
         )
-        nonresponse_plan = design_cols[1].checkbox(
+        nonresponse_plan = design_cols[0].checkbox(
             "Nonresponse, missing specimens, and pathway completeness will be tracked",
             key="designer_nonresponse",
         )
@@ -2581,6 +2710,7 @@ def study_designer_page() -> None:
         "viruses": viruses,
         "virus_coverage": virus_coverage,
         "target_population": target_population,
+        "target_population_category": target_population_category,
         "surveillance_mode": surveillance_mode,
         "surveillance_architecture": surveillance_architecture,
         "active_stream_definition": active_stream_definition,
@@ -2594,6 +2724,8 @@ def study_designer_page() -> None:
         "testing_strategy": synthesis_path.testing_strategy,
         "summary_estimator": synthesis_path.summary_estimator,
         "sampling_recruitment_method": sampling_recruitment_method,
+        "sampling_frame_category": sampling_frame_category,
+        "sampling_frame_coverage_justification": sampling_frame_coverage_justification,
         "planned_sample_size": int(planned_sample_size),
         "sampling_frame_defined": sampling_frame_defined,
         "eligibility_defined": eligibility_defined,
@@ -2784,8 +2916,8 @@ def framework_page() -> None:
         - Assess one study–virus–estimand at a time; define target population → biological endpoint → observed numerator → endpoint-defining assay/algorithm → testing/verification population → matched denominator → summary estimator before scoring.
         - Do not combine IgG, IgM, NS1, PCR, and neutralization evidence into one score. If IgM/IgG results are inseparable, retain a mixed/other serologic endpoint rather than inferring either component.
         - Define the chain before scoring: target population → biological endpoint → endpoint-defining assay → testing/verification population → numerator/denominator → summary estimator.
-        - Use the Population Representation Dictionary for Q1-Q3: define the target first; judge achieved representation (Q1), participant-derived source (Q2), and frame suitability (Q3) separately. A legitimate restricted target is not penalized for lacking national coverage.
-        - Use the Sampling/Recruitment Method Dictionary for Q4 and classify the actual endpoint-specific pathway. Random laboratory subsampling does not repair a convenience source frame.
+        - Use the 2026-09-10 Design Library for Q1-Q3: classify the target and operational source frame separately, then use the Target-Frame Matrix as decision support. A legitimate restricted target is not penalized for lacking national coverage, and the matrix never replaces study-specific catchment and coverage judgement.
+        - Use the Design Library recruitment classes for Q4 and trace every consequential stage from frame → sites → people/specimens → endpoint population. The weakest consequential stage governs; multiple sites or random laboratory subsampling alone do not upgrade source recruitment.
         - Q5 calculates Total tested / Total recruited and, when staged testing applies, actual completed / planned. The lower applicable percentage determines the score. Planned representative subsampling is not missingness when the planned subset is completed.
         - Q8 requires every observed quantity used by the estimator, including verification-stratum counts for staged or weighted designs. Keep posterior/reconstructed expected positives distinct from observed numerators.
         - Treat reference-positive/reference-negative validation samples as ancillary: they may support Q6a/Q6b and adjustment parameters but are not prevalence endpoints and do not automatically earn Q6c.
@@ -2793,6 +2925,7 @@ def framework_page() -> None:
         - Retain Tier B only when the complete planned screen-positive verification set was actually tested; Tier B population prevalence uses the full screening-algorithm entry denominator. Otherwise reclassify to selected/unresolved Tier D unless representative Tier C verification is explicitly supported.
         - Tier C requires a predefined representative/random verification subset and all counts needed for its weighted or screen-conditioned estimator. Keep its raw verification-subset proportion separate from population prevalence.
         - For Q6, distinguish intrinsic validity (Q6a), validation/standardization/QC (Q6b), and independent orthogonal confirmation (Q6c). A linked high-specificity method earns Q6c=2 when systematically applied to the complete relevant positive/eligible set and Q6c=1 when limited to a predefined representative/random or selected subset; unlinked or ancillary assay-validation samples do not automatically earn Q6c.
+        - Record endpoint structure, primary assay role, endpoint testing population, confirmation role, and confirmation coverage as separate variables. Repetition of the same assay or platform is not independent confirmation.
         - For Q7, judge the endpoint-defining procedure. Uneven optional supporting confirmation does not reduce an otherwise consistent primary endpoint; a staged endpoint requires consistent completion of every required step.
         - Do not infer unreported methods. Retain audit comments with every non-obvious score.
         - A high assay score cannot conceptually compensate for severe selection bias, and representativeness cannot compensate for an invalid assay.

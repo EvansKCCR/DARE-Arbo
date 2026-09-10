@@ -16,8 +16,8 @@ from typing import Any, BinaryIO, Iterable, Mapping
 
 
 GUIDE_VERSION = (
-    "DARE-Arbo endpoint-first application principle + Appraisal Library rules "
-    "(workspace version, 2026-09-09)"
+    "DARE-Arbo endpoint-first application principle + Design Library rules "
+    "(workspace version, 2026-09-10)"
 )
 
 
@@ -1193,10 +1193,33 @@ def evaluate_study_design_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
     sampling_method = str(plan.get("sampling_recruitment_method") or "")
     q4_strength = Q4_USER_METHOD_SCORES.get(sampling_method)
     sampling_fraction = 0.0 if q4_strength is None else q4_strength / 3
+    target_category = normalize_target_population_category(
+        str(plan.get("target_population_category") or ""),
+        str(plan.get("target_population") or ""),
+    )
+    frame_category = normalize_sampling_frame_category(
+        str(plan.get("sampling_frame_category") or ""),
+        str(plan.get("sampling_frame_description") or ""),
+    )
+    target_frame_alignment = assess_target_frame_alignment(
+        target_category, frame_category
+    )
+    coverage_justification = bool(
+        str(plan.get("sampling_frame_coverage_justification") or "").strip()
+    )
+    controlled_frame_ready = bool(frame_category) and (
+        target_frame_alignment["status"] == "default-aligned"
+        or coverage_justification
+    )
+    # Retain compatibility with plans created before controlled frame fields were
+    # introduced, while requiring the matrix for new plans.
+    if not plan.get("sampling_frame_category") and plan.get("sampling_frame_defined"):
+        controlled_frame_ready = True
     elements: dict[str, dict[str, float]] = {
         "Study design": {
             "Target population explicitly defined": float(bool(str(plan.get("target_population") or "").strip())),
-            "Sampling frame aligned with the target": float(bool(plan.get("sampling_frame_defined"))),
+            "Target population classified with the Design Library": float(bool(target_category)),
+            "Sampling frame classified and aligned/justified for the target": float(controlled_frame_ready),
             "Sampling/recruitment strength": sampling_fraction,
             "Eligibility criteria prespecified": float(bool(plan.get("eligibility_defined"))),
             "Sample-size rationale documented": float(bool(plan.get("sample_size_rationale"))),
@@ -1256,9 +1279,13 @@ def evaluate_study_design_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
             recommendations.append(
                 f"{pillar}: complete " + "; ".join(result["missing"][:3])
             )
-    if q4_strength in (0, 1):
+    if q4_strength is None or q4_strength <= 1:
         recommendations.append(
             "Study design: consider probability-based, structured multisite, census, or documented complete capture when compatible with the target population."
+        )
+    if target_frame_alignment["status"] != "default-aligned" and not coverage_justification:
+        recommendations.append(
+            "Study design: document why the selected source frame covers the declared target population, or choose a default-aligned frame from the Target-Frame Matrix."
         )
     if confirmatory_required and not confirmatory_selected:
         recommendations.append(
@@ -1282,6 +1309,7 @@ def evaluate_study_design_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
             "summary_estimator": SYNTHESIS_PATHS_BY_KEY[path_key].summary_estimator,
             "numerator": SYNTHESIS_PATHS_BY_KEY[path_key].numerator,
             "denominator": SYNTHESIS_PATHS_BY_KEY[path_key].denominator,
+            **assay_path_profile(path_key),
         }
         for stream in surveillance_outputs
         for virus in viruses
@@ -1294,6 +1322,9 @@ def evaluate_study_design_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         "confirmatory_required": confirmatory_required,
         "all_required_assays_selected": primary_selected and confirmatory_selected,
         "sampling_method_score": q4_strength,
+        "target_population_category": target_category,
+        "sampling_frame_category": frame_category,
+        "target_frame_alignment": target_frame_alignment,
         "synthesis_path_keys": path_keys,
         "viruses": viruses,
         "surveillance_outputs": surveillance_outputs,
@@ -1451,7 +1482,9 @@ def render_study_design_png(
     flow_box(
         target_box,
         "1. Target population and surveillance frame",
-        f"{plan.get('target_population') or 'Define target population'} | {plan.get('surveillance_architecture') or 'Select surveillance architecture'}",
+        f"{readiness.get('target_population_category') or plan.get('target_population') or 'Define target population'} | "
+        f"{readiness.get('sampling_frame_category') or 'Classify source frame'} | "
+        f"{plan.get('surveillance_architecture') or 'Select surveillance architecture'}",
         colors["navy"],
     )
 
@@ -1752,6 +1785,10 @@ def render_surveillance_design_report_pdf(
         key_value_table([
             ("Planned study title", plan.get("study_title")),
             ("Target population", plan.get("target_population")),
+            ("Controlled target category", evaluated.get("target_population_category")),
+            ("Controlled sampling frame", evaluated.get("sampling_frame_category")),
+            ("Target-frame matrix status", (evaluated.get("target_frame_alignment") or {}).get("status")),
+            ("Frame coverage justification", plan.get("sampling_frame_coverage_justification")),
             ("Virus coverage", plan.get("virus_coverage")),
             ("Arbovirus target(s)", plan.get("virus") or "; ".join(plan.get("viruses") or [])),
             ("Surveillance mode", plan.get("surveillance_mode")),
@@ -1828,6 +1865,11 @@ def render_surveillance_design_report_pdf(
                 Paragraph(clean(unit_title), styles["DareUnit"]),
                 key_value_table([
                     ("Testing strategy", unit.get("testing_strategy")),
+                    ("Endpoint structure", unit.get("endpoint_structure")),
+                    ("Primary assay role", unit.get("primary_assay_role")),
+                    ("Confirmation role", unit.get("confirmation_role")),
+                    ("Confirmation coverage", unit.get("confirmation_coverage")),
+                    ("Endpoint testing population", unit.get("measurement_pathway")),
                     ("Primary / screening assay", path_assays.get("primary_assay") or plan.get("primary_assay")),
                     ("Confirmatory assay(s)", path_assays.get("confirmatory_assay") or "Not required / not selected"),
                     ("Observed numerator", unit.get("numerator")),
@@ -2591,41 +2633,16 @@ def _sentences_by_page(pages: Iterable[str]) -> list[EvidenceSnippet]:
 
 POPULATION_TARGET_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
-        "General febrile population",
-        ("general febrile population", "febrile population", "febrile patients", "acute febrile illness", "fever patients"),
-    ),
-    (
-        "Community or general populations",
-        ("community or general population", "general population", "community population", "community residents", "district residents", "population-based", "household survey", "residents"),
-    ),
-    (
-        "Occupationally or zoonotically exposed populations",
-        ("occupationally exposed", "zoonotically exposed", "occupational population", "high-exposure", "livestock contact", "animal contact", "vector exposure", "healthcare workers", "farmers", "herders", "slaughterhouse workers", "veterinarians", "military personnel"),
-    ),
-    (
         "Suspected arbovirus population",
-        ("suspected arbovirus population", "suspected arbovirus", "suspected dengue", "suspected chikungunya", "suspected zika", "arbovirus-suspected", "suspected cases"),
-    ),
-    ("Blood donors", ("blood donors", "blood donor", "blood-donor")),
-    (
-        "Other or mixed populations",
-        ("other or mixed population", "mixed populations", "mixed population", "multiple population groups", "heterogeneous population"),
-    ),
-    (
-        "Pregnant women / antenatal populations",
-        ("pregnant women", "pregnant participants", "pregnancy cohort", "antenatal", "prenatal", "postpartum"),
+        ("suspected arbovirus population", "suspected arbovirus", "suspected dengue", "suspected chikungunya", "suspected zika", "arbovirus-suspected", "suspected cases", "probable arbovirus"),
     ),
     (
         "Non-malarial febrile population",
         ("non-malarial febrile population", "non-malarial febrile", "non-malarial fever", "malaria-negative febrile", "malaria negative febrile"),
     ),
     (
-        "Other defined clinical cohorts",
-        ("defined clinical cohort", "clinical cohort", "hospitalized patients", "hospitalised patients", "inpatients", "pediatric patients", "paediatric patients", "adult patients", "people living with hiv", "hiv-positive participants", "diagnostic evaluation", "cases and controls"),
-    ),
-    (
-        "Archived or residual specimen populations",
-        ("archived specimen population", "archived specimens", "stored specimens", "residual specimens", "residual samples", "biobank", "serotheque"),
+        "General febrile population",
+        ("general febrile population", "febrile population", "febrile patients", "febrile attendees", "acute febrile illness", "fever patients"),
     ),
     (
         "Non-febrile patients",
@@ -2633,7 +2650,36 @@ POPULATION_TARGET_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "General outpatients",
-        ("general outpatients", "outpatient population", "outpatients", "ambulatory patients", "clinic attendees"),
+        ("general outpatients", "outpatient population", "outpatients", "ambulatory patients", "clinic attendees", "opd attendees"),
+    ),
+    (
+        "Pregnant women / antenatal populations",
+        ("pregnant women", "pregnant participants", "pregnancy cohort", "antenatal", "prenatal", "postpartum", "anc attendees"),
+    ),
+    ("Blood donors", ("blood donors", "blood donor", "blood-donor", "blood donation")),
+    (
+        "Occupationally / zoonotically exposed populations",
+        ("occupationally exposed", "zoonotically exposed", "occupational population", "occupational groups", "occupationally defined", "high-exposure", "livestock contact", "animal contact", "vector exposure", "healthcare workers", "farmers", "herders", "slaughterhouse workers", "veterinarians", "military personnel", "workplace"),
+    ),
+    (
+        "Community or general populations",
+        ("community or general population", "general population", "community population", "community residents", "district residents", "population-based", "household survey", "residents"),
+    ),
+    (
+        "Other defined populations / cohorts",
+        ("defined population", "defined cohort", "clinical cohort", "hospitalized patients", "hospitalised patients", "inpatients", "pediatric patients", "paediatric patients", "adult patients", "people living with hiv", "hiv-positive participants", "diagnostic evaluation", "cases and controls", "trial cohort", "research roster", "household contacts"),
+    ),
+    (
+        "Underlying target unresolved - archived/residual specimens",
+        ("underlying target unresolved", "anonymous stored sera", "unresolved archived", "unresolved residual"),
+    ),
+    (
+        "Other / mixed populations",
+        ("other or mixed population", "other / mixed population", "mixed populations", "mixed population", "multiple population groups", "heterogeneous population"),
+    ),
+    (
+        "Unclear / insufficiently described",
+        ("unclear target", "insufficiently described", "target not reported", "population not described"),
     ),
 )
 
@@ -2644,25 +2690,82 @@ LEGACY_TARGET_CATEGORY_MAP = {
     "General population": "Community or general populations",
     "Febrile-patient population": "General febrile population",
     "Pediatric febrile population": "General febrile population",
-    "Occupational population": "Occupationally or zoonotically exposed populations",
-    "High-exposure population": "Occupationally or zoonotically exposed populations",
-    "One Health population": "Occupationally or zoonotically exposed populations",
-    "Animal population": "Occupationally or zoonotically exposed populations",
+    "Occupational population": "Occupationally / zoonotically exposed populations",
+    "High-exposure population": "Occupationally / zoonotically exposed populations",
+    "One Health population": "Occupationally / zoonotically exposed populations",
+    "Animal population": "Occupationally / zoonotically exposed populations",
     "Antenatal or pregnant population": "Pregnant women / antenatal populations",
     "Blood-donor population": "Blood donors",
-    "Archived-specimen population": "Archived or residual specimen populations",
+    "Archived-specimen population": "Underlying target unresolved - archived/residual specimens",
+    "Archived or residual specimen populations": "Underlying target unresolved - archived/residual specimens",
     "Surveillance-case population": "Suspected arbovirus population",
-    "Adult clinical population": "Other defined clinical cohorts",
-    "Hospitalized clinical population": "Other defined clinical cohorts",
-    "People living with HIV": "Other defined clinical cohorts",
-    "Outbreak population": "Other defined clinical cohorts",
-    "Diagnostic-evaluation population": "Other defined clinical cohorts",
+    "Adult clinical population": "Other defined populations / cohorts",
+    "Hospitalized clinical population": "Other defined populations / cohorts",
+    "People living with HIV": "Other defined populations / cohorts",
+    "Outbreak population": "Other defined populations / cohorts",
+    "Diagnostic-evaluation population": "Other defined populations / cohorts",
+    "Other defined clinical cohorts": "Other defined populations / cohorts",
+    "Other or mixed populations": "Other / mixed populations",
+    "Occupationally or zoonotically exposed populations": "Occupationally / zoonotically exposed populations",
 }
 
 APPRAISAL_LIBRARY_RULE_SOURCE = (
-    "DARE_Arbo_Library_with_Decision_Tree.xlsx: Appraisal Library; "
-    "Q1 Q3 Q4 Rules; Quick Decision Matrix; Worked Examples"
+    "DARE_Arbo_Design_library.xlsx (2026-09-10): Appraisal Library; "
+    "Target Decision Tree; Frame Decision Tree; Assessor Decision Tree; "
+    "Q1 Q3 Q4 Rules; Target-Frame Matrix; Worked Examples; "
+    "DARE-Arbo_application_principle.docx"
 )
+
+SAMPLING_FRAME_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Sentinel Site / Network", ("sentinel site", "sentinel network", "sentinel facilities", "sentinel laboratory")),
+    ("Surveillance / Outbreak Setting", ("surveillance database", "surveillance system", "active surveillance", "passive surveillance", "case finding", "case-finding", "line list", "outbreak investigation", "outbreak response")),
+    ("Inpatient Registry", ("inpatient registry", "admission register", "ward register", "admitted patients", "inpatient ward", "icu registry")),
+    ("Outpatient Clinic Registry", ("outpatient clinic registry", "outpatient register", "opd register", "ambulatory register", "primary healthcare center", "primary health centre", "outpatient clinic", "general opd")),
+    ("General Lab Register", ("general lab register", "laboratory register", "laboratory logbook", "diagnostic laboratory register", "reference laboratory register", "laboratory specimen stream")),
+    ("Specialised Clinic Register", ("specialised clinic register", "specialized clinic register", "antenatal clinic", "anc register", "maternity register", "hiv clinic", "diabetes clinic")),
+    ("Blood Donor Registry", ("blood donor registry", "blood donor register", "blood bank donor", "blood transfusion centre", "blood transfusion center")),
+    ("Archived Specimen Frame", ("archived specimen frame", "biobank", "serotheque", "stored specimen repository", "residual specimen repository", "banked sera")),
+    ("Occupational / Exposure Frame", ("occupational roster", "workplace roster", "staff list", "worker list", "farm list", "slaughterhouse", "abattoir", "exposure roster")),
+    ("Population / Household Enumeration", ("population enumeration", "household enumeration", "enumeration area", "household list", "household register", "census list", "population register", "resident list")),
+    ("Parent Cohort / Research Roster", ("parent cohort", "research roster", "trial roster", "cohort roster", "parent study")),
+    ("Community / Location-Based Frame (No Verified Enumeration)", ("community-based recruitment", "location-based recruitment", "selected villages", "named communities", "community volunteers")),
+    ("Health-Facility Register (Service Unspecified)", ("health-facility register", "health facility register", "hospital attendees", "hospital-attendee frame", "hospital register", "health facility", "hospital-based", "participating hospital", "participating clinic", "referral hospital", "relevant hospitals", "health centres", "health centers", "facility network", "hospital network", "health centre network", "health center network")),
+    ("Mixed / Compound Frame", ("mixed frame", "compound frame", "inpatient and outpatient", "community and facility", "opd and anc", "outpatient, pregnant", "multiple source frames")),
+    ("Unclear / Insufficiently Described Frame", ("unclear frame", "frame not reported", "insufficiently described frame", "unknown source frame")),
+)
+
+LEGACY_SAMPLING_FRAME_MAP = {
+    "Community frame": "Community / Location-Based Frame (No Verified Enumeration)",
+    "Household frame": "Population / Household Enumeration",
+    "Facility frame": "Health-Facility Register (Service Unspecified)",
+    "Surveillance frame": "Surveillance / Outbreak Setting",
+    "Archived specimen frame": "Archived Specimen Frame",
+    "Mixed frame": "Mixed / Compound Frame",
+}
+
+TARGET_FRAME_DEFAULT_ALIGNMENT: dict[str, tuple[str, ...]] = {
+    "Suspected arbovirus population": ("Sentinel Site / Network", "Surveillance / Outbreak Setting"),
+    "Non-malarial febrile population": ("Outpatient Clinic Registry", "Sentinel Site / Network", "Surveillance / Outbreak Setting"),
+    "General febrile population": ("Outpatient Clinic Registry", "Sentinel Site / Network", "Surveillance / Outbreak Setting"),
+    "Non-febrile patients": ("Outpatient Clinic Registry", "General Lab Register"),
+    "General outpatients": ("Outpatient Clinic Registry",),
+    "Community or general populations": ("Population / Household Enumeration",),
+    "Pregnant women / antenatal populations": ("Specialised Clinic Register", "Population / Household Enumeration"),
+    "Blood donors": ("Blood Donor Registry",),
+    "Occupationally / zoonotically exposed populations": ("Occupational / Exposure Frame",),
+}
+
+TARGET_FRAME_POTENTIAL_ALIGNMENT: dict[str, tuple[str, ...]] = {
+    "Suspected arbovirus population": ("Outpatient Clinic Registry", "Inpatient Registry", "General Lab Register", "Health-Facility Register (Service Unspecified)"),
+    "Non-malarial febrile population": ("Inpatient Registry", "General Lab Register", "Health-Facility Register (Service Unspecified)", "Mixed / Compound Frame"),
+    "General febrile population": ("Inpatient Registry", "General Lab Register", "Health-Facility Register (Service Unspecified)", "Parent Cohort / Research Roster"),
+    "Non-febrile patients": ("Specialised Clinic Register", "Health-Facility Register (Service Unspecified)", "Parent Cohort / Research Roster"),
+    "General outpatients": ("General Lab Register", "Health-Facility Register (Service Unspecified)", "Sentinel Site / Network", "Surveillance / Outbreak Setting"),
+    "Community or general populations": ("Community / Location-Based Frame (No Verified Enumeration)", "Sentinel Site / Network", "Parent Cohort / Research Roster"),
+    "Pregnant women / antenatal populations": ("Outpatient Clinic Registry", "Parent Cohort / Research Roster", "Health-Facility Register (Service Unspecified)"),
+    "Blood donors": ("Archived Specimen Frame", "Parent Cohort / Research Roster"),
+    "Occupationally / zoonotically exposed populations": ("Population / Household Enumeration", "Community / Location-Based Frame (No Verified Enumeration)", "Parent Cohort / Research Roster"),
+}
 
 Q1_AGE_EVIDENCE_TERMS = (
     "age group", "age groups", "age distribution", "age range", "aged ",
@@ -2699,10 +2802,10 @@ Q4_SCORE_TERMS: dict[int, tuple[str, ...]] = {
         "three-stage probability", "multistage cluster", "cluster-probability",
         "probability proportional to size", "pps cluster", "stratified random", "community census",
         "census of", "universal inclusion of eligible", "all eligible participants were included",
-        "all eligible participants were invited", "all eligible specimens were analysed",
+        "all eligible specimens were analysed",
         "all eligible specimens were analyzed", "complete case ascertainment",
         "all eligible staff were included", "all eligible staff included",
-        "near-complete capture", "near complete capture", "national population-based survey",
+        "national population-based survey",
         "regional population-based survey",
     ),
     2: (
@@ -2727,6 +2830,22 @@ Q4_SCORE_TERMS: dict[int, tuple[str, ...]] = {
 }
 
 Q4_USER_METHOD_SCORES: dict[str, int | None] = {
+    "Selection method not reported / insufficient": 0,
+    "Convenience / service-based non-probability recruitment": 1,
+    "Facility/service-based non-probability recruitment": 1,
+    "Consecutive recruitment": 1,
+    "Volunteer / self-selected recruitment": 1,
+    "Purposive / judgement selection": 1,
+    "Case-based / passive surveillance / outbreak enrollment": 1,
+    "Available / eligibility-selected archived specimens": 1,
+    "Simple / systematic random selection within a defined frame": 2,
+    "Structured multisite / sentinel capture without full probability sampling": 2,
+    "Multistage / stratified / cluster probability sampling": 3,
+    "Census / universal / complete eligible capture": 3,
+    "Mixed probability/non-probability pathway - weakest stage governs": 1,
+    "Multistage/structured or systematic process - probability basis unclear": 0,
+    # Legacy values remain import-compatible, but ambiguous multisite labels no
+    # longer receive two points without the Design Library's coverage evidence.
     "Insufficiently described": 0,
     "Convenience recruitment": 1,
     "Volunteer recruitment": 1,
@@ -2743,14 +2862,14 @@ Q4_USER_METHOD_SCORES: dict[str, int | None] = {
     "Systematic random sampling": 2,
     "Random sampling within a restricted population": 2,
     "Random household/community selection": 2,
-    "Multisite recruitment": 2,
-    "Multicommunity recruitment": 2,
+    "Multisite recruitment": None,
+    "Multicommunity recruitment": None,
     "Structured multisite surveillance": 2,
     "Multistage probability sampling": 3,
     "Cluster-probability sampling": 3,
     "Stratified random sampling": 3,
     "Probability-proportional-to-size sampling": 3,
-    "National or regional population-based survey": 3,
+    "National or regional population-based survey": None,
     "Census of the defined population": 3,
     "Universal inclusion of eligible participants": 3,
     "Universal inclusion of eligible specimens": 3,
@@ -2782,6 +2901,141 @@ def normalize_target_population_category(
     if category in LEGACY_TARGET_CATEGORY_MAP:
         return LEGACY_TARGET_CATEGORY_MAP[category]
     return _controlled_target_category(f"{category} {target_population}".strip())
+
+
+def _controlled_sampling_frame_category(text: str) -> str | None:
+    """Classify a reported operational source frame using the Design Library."""
+    lowered = str(text or "").lower()
+    mixed_terms = dict(SAMPLING_FRAME_CATEGORIES)["Mixed / Compound Frame"]
+    if any(term in lowered for term in mixed_terms):
+        return "Mixed / Compound Frame"
+    for label, terms in SAMPLING_FRAME_CATEGORIES:
+        if any(term in lowered for term in terms):
+            return label
+    return None
+
+
+def normalize_sampling_frame_category(
+    value: str | None, sampling_frame_description: str = ""
+) -> str | None:
+    """Return the 2026-09-10 controlled sampling-frame category."""
+    category = str(value or "").strip()
+    current_labels = {label for label, _ in SAMPLING_FRAME_CATEGORIES}
+    if category in current_labels:
+        return category
+    if category in LEGACY_SAMPLING_FRAME_MAP:
+        return LEGACY_SAMPLING_FRAME_MAP[category]
+    return _controlled_sampling_frame_category(
+        f"{category} {sampling_frame_description}".strip()
+    )
+
+
+def assess_target_frame_alignment(
+    target_population_category: str | None,
+    sampling_frame_category: str | None,
+) -> dict[str, str]:
+    """Apply the library matrix as decision support, never as a hidden score lookup."""
+    target = normalize_target_population_category(target_population_category)
+    frame = normalize_sampling_frame_category(sampling_frame_category)
+    if not target or target == "Unclear / insufficiently described":
+        return {
+            "status": "unresolved",
+            "target": target or "Unclear / insufficiently described",
+            "frame": frame or "Unclear / Insufficiently Described Frame",
+            "rationale": "A target-frame comparison cannot be made until the estimand-specific target population is classified.",
+        }
+    if not frame or frame == "Unclear / Insufficiently Described Frame":
+        return {
+            "status": "unresolved",
+            "target": target,
+            "frame": frame or "Unclear / Insufficiently Described Frame",
+            "rationale": "The operational source list, registry, network, roster, enumeration system, or specimen source is not established.",
+        }
+    if target == "Underlying target unresolved - archived/residual specimens":
+        return {
+            "status": "unresolved",
+            "target": target,
+            "frame": frame,
+            "rationale": "Archive availability alone cannot establish coverage of the original participant target; recover the parent target and frame where possible.",
+        }
+    if target in {"Other / mixed populations", "Other defined populations / cohorts"} or frame == "Mixed / Compound Frame":
+        return {
+            "status": "manual",
+            "target": target,
+            "frame": frame,
+            "rationale": "The Design Library requires a study-specific coverage justification for this target-frame combination; separate component estimands when possible.",
+        }
+    if frame in TARGET_FRAME_DEFAULT_ALIGNMENT.get(target, ()):
+        return {
+            "status": "default-aligned",
+            "target": target,
+            "frame": frame,
+            "rationale": "This is a default structural match in the Design Library; Q3 still requires study-specific geography, catchment, eligibility, and coverage evidence.",
+        }
+    if frame in TARGET_FRAME_POTENTIAL_ALIGNMENT.get(target, ()):
+        return {
+            "status": "potentially-compatible",
+            "target": target,
+            "frame": frame,
+            "rationale": "This frame may cover the declared target, but Q3 requires an explicit catchment/coverage justification.",
+        }
+    return {
+        "status": "mismatch-warning",
+        "target": target,
+        "frame": frame,
+        "rationale": "This is not a default target-frame match. A narrow frame may still be valid for an equally narrow declared target, but broader inference requires explicit justification.",
+    }
+
+
+def assay_path_profile(synthesis_path_key: str) -> dict[str, str]:
+    """Separate endpoint structure, assay role, tested population, and confirmation coverage."""
+    if synthesis_path_key not in SYNTHESIS_PATHS_BY_KEY:
+        raise ValueError(f"Unknown synthesis path: {synthesis_path_key}")
+    path = SYNTHESIS_PATHS_BY_KEY[synthesis_path_key]
+    if synthesis_path_key in {"serology_validation", "molecular_validation"}:
+        return {
+            "endpoint_structure": "Staged assay-performance algorithm",
+            "primary_assay_role": "Primary screen in a validation algorithm",
+            "confirmation_role": "Endpoint-defining reference classification for a separate assay-performance endpoint",
+            "confirmation_coverage": "Predefined positive/negative verification strata",
+            "measurement_pathway": "Representative or selected two-phase validation sample; classify from the actual selection rule",
+        }
+    if path.verification_design == "all_screen_positive":
+        return {
+            "endpoint_structure": "Staged diagnostic algorithm",
+            "primary_assay_role": "Primary screen in a staged algorithm",
+            "confirmation_role": "Endpoint-defining stage",
+            "confirmation_coverage": "Complete required confirmation",
+            "measurement_pathway": "Population entering the complete screening algorithm",
+        }
+    if path.verification_design == "representative_positive_subset":
+        return {
+            "endpoint_structure": "Staged verification estimator",
+            "primary_assay_role": "Primary screen in a staged algorithm",
+            "confirmation_role": "Endpoint-defining verification stage",
+            "confirmation_coverage": "Predefined representative/random subset",
+            "measurement_pathway": "Representative verification subsample",
+        }
+    if path.verification_design == "subset_positive":
+        return {
+            "endpoint_structure": "Staged selected-subset pathway",
+            "primary_assay_role": "Primary screen in a staged algorithm",
+            "confirmation_role": "Endpoint-defining for the conditional subset only",
+            "confirmation_coverage": "Selected/mixed subset",
+            "measurement_pathway": "Selected verification subsample",
+        }
+    primary_role = (
+        "Primary endpoint-defining direct/reference-standard assay"
+        if path.endpoint_key in {"confirmed_active", "neutralizing_antibody"}
+        else "Primary endpoint-defining assay"
+    )
+    return {
+        "endpoint_structure": "Single-assay endpoint",
+        "primary_assay_role": primary_role,
+        "confirmation_role": "None for endpoint definition; any later linked orthogonal test is supporting confirmation or a separate endpoint",
+        "confirmation_coverage": "Not required for endpoint definition",
+        "measurement_pathway": "Population tested by the endpoint-defining assay",
+    }
 
 
 EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
@@ -2823,6 +3077,7 @@ def suggest_scores(
     target_population_category: str = "",
     achieved_sample_representation: str = "",
     sampling_frame_description: str = "",
+    sampling_frame_category: str = "",
     sampling_recruitment_method: str = "",
     endpoint_procedure_consistency: str = "",
     primary_assay: str = "",
@@ -2955,7 +3210,7 @@ def suggest_scores(
         )
     add(
         "Q1", q1, q1_conf,
-        f"Appraisal Library / Quick Decision Matrix classification: {q1_class}. {q1_reason}",
+        f"Design Library target-decision classification: {q1_class}. {q1_reason}",
     )
 
     participant_specimen = has_any(
@@ -2984,6 +3239,9 @@ def suggest_scores(
     )
 
     entered_frame = sampling_frame_description.strip().lower()
+    controlled_frame = normalize_sampling_frame_category(
+        sampling_frame_category, sampling_frame_description
+    ) or _controlled_sampling_frame_category(f"{sampling_frame_description} {full_text}")
     combined_frame_text = f"{full_text} {entered_frame}".strip()
     population_enumeration_frame = any(
         term in combined_frame_text
@@ -3022,9 +3280,10 @@ def suggest_scores(
             "donor centre", "donor center", "complete staff", "eight relevant hospitals",
         )
     )
-    entered_frame_evidence = bool(entered_frame) and (
+    entered_frame_evidence = bool(entered_frame or controlled_frame) and (
         any(term in entered_frame for term in Q3_FRAME_EVIDENCE_TERMS)
         or any(term in entered_frame for term in ("community", "household", "facility", "hospital", "clinic", "district", "region", "surveillance", "cohort", "census"))
+        or controlled_frame is not None
     )
     explicit_undercoverage = any(term in combined_frame_text for term in Q3_EXPLICIT_UNDERCOVERAGE_TERMS)
     single_facility_frame = any(
@@ -3039,7 +3298,7 @@ def suggest_scores(
         term in combined_frame_text for term in ("named communities", "selected communities")
     ) and not population_enumeration_frame
     archived_availability_subset = (
-        target_category == "Archived or residual specimen populations" or archived_only_unclear
+        target_category == "Underlying target unresolved - archived/residual specimens" or archived_only_unclear
     ) and any(term in combined_frame_text for term in ("only stored sera", "only stored serum", "adequate volume", "available specimens")) and not archived_source_frame
     frame_mismatch = any(
         (
@@ -3050,30 +3309,47 @@ def suggest_scores(
             archived_availability_subset,
         )
     )
-    pdf_supported_frame = frame_evidence and not frame_mismatch
-    entered_frame_supported = entered_frame_evidence and not frame_mismatch
+    alignment = assess_target_frame_alignment(target_category, controlled_frame)
+    explicit_coverage_justification = target_is_attendee_specific or any(
+        term in combined_frame_text
+        for term in (
+            "covers the target", "complete catchment", "all eligible", "all districts",
+            "all facilities", "population enumeration", "household enumeration",
+            "representative of", "defined catchment", "complete source frame",
+        )
+    )
+    matrix_blocks_automatic_support = alignment["status"] in {
+        "unresolved", "mismatch-warning"
+    } or (
+        alignment["status"] in {"potentially-compatible", "manual"}
+        and not explicit_coverage_justification
+    )
+    pdf_supported_frame = frame_evidence and not frame_mismatch and not matrix_blocks_automatic_support
+    entered_frame_supported = entered_frame_evidence and not frame_mismatch and not matrix_blocks_automatic_support
     q3_positive = target_is_defined and (pdf_supported_frame or entered_frame_supported)
     if pdf_supported_frame:
         q3_confidence = "moderate"
         q3_reason = (
-            f"The reported source list/frame reasonably covers the defined {target_label}. Frame coverage is judged against the stated target, not an automatically national population."
+            f"The reported {controlled_frame or 'source frame'} reasonably covers the defined {target_label}. "
+            f"Matrix status: {alignment['status']}. Frame coverage is judged against the stated target, not an automatically national population."
         )
     elif entered_frame_supported:
         q3_confidence = "low"
         q3_reason = (
-            f"Provisional fallback from the reviewer-entered sampling frame/source population: {sampling_frame_description.strip()}. "
+            f"Provisional fallback from the reviewer-entered sampling frame/source population ({controlled_frame or 'unclassified frame'}): {sampling_frame_description.strip() or sampling_frame_category}. "
             "The target-population label alone is not used to award Q3; verify frame coverage before finalizing."
         )
     else:
         q3_confidence = "high" if narrow_frame_for_broader_target or archived_availability_subset else "moderate" if facility_frame or frame_mismatch else "low"
         q3_reason = (
-            f"The source frame was not described well enough or excludes important parts of the defined {target_label}. Recruitment quality cannot repair an under-covering frame."
+            f"The source frame was not described well enough, lacks the coverage justification required for a {alignment['status']} matrix match, or excludes important parts of the defined {target_label}. "
+            f"{alignment['rationale']} Recruitment quality cannot repair an under-covering frame."
         )
     add(
         "Q3",
         1 if q3_positive else 0,
         q3_confidence,
-        f"Appraisal Library / Quick Decision Matrix classification. {q3_reason}",
+        f"Design Library Target-Frame Matrix classification. {q3_reason}",
     )
 
     q4_signal_terms = (
@@ -3135,7 +3411,7 @@ def suggest_scores(
         for term in (
             "probability proportional to size", "pps cluster", "random households",
             "random eligible", "strata", "clusters", "sampling stages",
-            "all eligible participants were included", "all eligible participants were invited",
+            "all eligible participants were included",
             "all eligible staff were included", "all eligible staff included",
             "universal inclusion", "census of",
         )
@@ -3237,6 +3513,17 @@ def suggest_scores(
             "second genomic target", "second pcr target", "virus isolation", "sequencing"
         )
         sequencing = has_affirmative("sequencing", "genotyping", "second genomic target", "second pcr target", "second target")
+    independent_direct_confirmation = assay_text_has(
+        confirmation_text,
+        "sequencing", "genotyping", "second genomic target", "second pcr target",
+        "second target", "virus isolation", "culture isolation",
+    )
+    if not confirmatory_assay:
+        independent_direct_confirmation = has_affirmative(
+            "confirmed by sequencing", "sequence-confirmed", "genotyping confirmed",
+            "second genomic target", "second pcr target", "second target",
+            "confirmed by virus isolation", "culture isolation",
+        )
     controls = has_affirmative("positive control", "negative control", "extraction control", "amplification control", "manufacturer", "validated", "validation", "reference protocol")
     subset = has_any("subset", "selected positive", "selected samples", "a proportion of")
     staged_endpoint_paths = {
@@ -3268,8 +3555,11 @@ def suggest_scores(
         else:
             q6a, q6a_reason = 2, "Confirmation was endpoint-defining but applied to a selected or unresolved subset, limiting the validity of the overall algorithm."
     elif endpoint_is_molecular and molecular:
-        q6a = 4 if controls else 3
-        q6a_reason = "Direct molecular/isolation testing was detected" + (" with validation/control evidence." if controls else ", but explicit validation/control evidence needs verification.")
+        q6a = 4
+        q6a_reason = (
+            "A high-specificity direct-detection NAAT/isolation method was identified as the endpoint-defining assay. "
+            "Validation, performance specifications, and controls are scored separately under Q6b."
+        )
     elif endpoint_is_neutralization and neutralization:
         q6a = 4
         q6a_reason = "A high-specificity neutralization method was detected as the endpoint-defining assay."
@@ -3310,8 +3600,10 @@ def suggest_scores(
             "The staged pathway was selected, but no independent orthogonal confirmatory method linked to the same virus and endpoint was identified."
         )
     elif endpoint_is_molecular:
-        if molecular and (sequencing or confirmation_molecular):
-            q6c, q6c_conf, q6c_reason = 2, "high", "A molecular endpoint plus independent sequencing/second-target confirmation was detected."
+        if molecular and independent_direct_confirmation:
+            q6c, q6c_conf, q6c_reason = 2, "high", "The primary direct-detection result was linked to independent sequencing, virus isolation, or a second genomic target."
+        elif molecular and confirmation_molecular:
+            q6c, q6c_conf, q6c_reason = 0, "moderate", "A later molecular test was reported, but an orthogonal method or independent genomic target was not established; routine repeat testing on the same method/platform does not earn Q6c."
         else:
             q6c, q6c_conf, q6c_reason = 0, "moderate", "A strong primary molecular assay does not itself earn confirmation points; no independent second method was detected."
     elif endpoint_is_neutralization:
@@ -3410,6 +3702,18 @@ def build_export_record(
     result = score_assessment(scores, pathway, endpoint_key)
     synthesis_path_key = str(metadata.get("synthesis_path_key") or "")
     synthesis_path = SYNTHESIS_PATHS_BY_KEY.get(synthesis_path_key)
+    path_profile = assay_path_profile(synthesis_path_key) if synthesis_path else {}
+    normalized_target_category = normalize_target_population_category(
+        str(metadata.get("target_population_category") or ""),
+        str(metadata.get("target_population") or ""),
+    ) or ""
+    normalized_frame_category = normalize_sampling_frame_category(
+        str(metadata.get("sampling_frame_category") or ""),
+        str(metadata.get("sampling_frame_description") or ""),
+    ) or ""
+    target_frame_alignment = assess_target_frame_alignment(
+        normalized_target_category, normalized_frame_category
+    )
     if synthesis_path:
         path_audit = audit_synthesis_path_counts(synthesis_path_key, metadata)
         effective_path = SYNTHESIS_PATHS_BY_KEY[path_audit["effective_synthesis_path_key"]]
@@ -3451,6 +3755,10 @@ def build_export_record(
         **dict(metadata),
         "guide_version": GUIDE_VERSION,
         "appraisal_library_rule_source": APPRAISAL_LIBRARY_RULE_SOURCE,
+        "target_population_category": normalized_target_category,
+        "sampling_frame_category": normalized_frame_category,
+        "target_frame_alignment_status": target_frame_alignment["status"],
+        "target_frame_alignment_rationale": target_frame_alignment["rationale"],
         "measurement_pathway": pathway,
         "dare_total": result["total"],
         "dare_applicable_maximum": result["maximum"],
@@ -3459,7 +3767,11 @@ def build_export_record(
         "selected_synthesis_tier": synthesis_path.summary_estimator if synthesis_path else classification.get("tier", ""),
         "synthesis_tier": count_audit["effective_tier"] if synthesis_path else effective_classification.get("tier", ""),
         "analysis_role": effective_classification.get("analysis_role", ""),
-        "assay_role": effective_classification.get("assay_role", metadata.get("assay_role", "")),
+        "endpoint_structure": path_profile.get("endpoint_structure", metadata.get("endpoint_structure", "")),
+        "assay_role": path_profile.get("primary_assay_role", effective_classification.get("assay_role", metadata.get("assay_role", ""))),
+        "confirmation_role": path_profile.get("confirmation_role", metadata.get("confirmation_role", "")),
+        "confirmation_coverage": path_profile.get("confirmation_coverage", metadata.get("confirmation_coverage", "")),
+        "endpoint_testing_population_class": path_profile.get("measurement_pathway", metadata.get("endpoint_testing_population_class", "")),
         "testing_verification_pathway": effective_classification.get("measurement_pathway", ""),
         "classification_caution": effective_classification.get("caution", ""),
         "synthesis_eligibility": effective_classification.get("eligibility", ""),
