@@ -221,150 +221,400 @@ def configure_page() -> None:
         """
         <style>
         :root {
-          --dare-obsidian: #071c35;
-          --dare-charcoal: #0b2745;
-          --dare-crimson: #18864b;
-          --dare-burgundy: #0b5b34;
-          --dare-wine: #155e3a;
-          --dare-rose: #f0f7f3;
-          --dare-silver: #a3a3a3;
-          --dare-light: #f4f7f5;
-          --dare-border: #c9d8d0;
+          color-scheme: light;
+          --dare-navy-950: #071C35;
+          --dare-navy-900: #0B2947;
+          --dare-navy-800: #123B5D;
+          --dare-teal-700: #0F766E;
+          --dare-teal-800: #115E59;
+          --dare-blue-600: #2563EB;
+          --dare-orange-700: #C2410C;
+          --dare-purple-700: #6D3A91;
+          --dare-ink: #102A43;
+          --dare-muted: #52606D;
+          --dare-border: #CBD5E1;
+          --dare-border-strong: #94A3B8;
+          --dare-surface: #FFFFFF;
+          --dare-surface-alt: #F6F9FB;
+          --dare-teal-pale: #ECFDF5;
+          --dare-orange-pale: #FFF7ED;
+          --dare-focus: rgba(37, 99, 235, .24);
+          --dare-shadow: 0 10px 30px rgba(7, 28, 53, .09);
+          --dare-radius: 14px;
+          --dare-page-bg: #F4F7F5;
         }
+        html, body, .stApp {
+          font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        [data-testid="stIconMaterial"] {
+          font-family: "Material Symbols Rounded", "Material Icons" !important;
+          font-feature-settings: "liga" !important;
+          -webkit-font-feature-settings: "liga" !important;
+        }
+        html { font-size: 16px; }
         .stApp {
-          background-color: #f4f7f5;
-          background-image: radial-gradient(circle, #d4dfd9 1.15px, transparent 1.2px);
-          background-position: 0 0;
-          background-size: 28px 28px;
-          background-attachment: fixed;
+          background: var(--dare-page-bg);
+          color: var(--dare-ink);
+        }
+        [data-testid="stAppViewContainer"] > .main {
+          background: transparent;
         }
         [data-testid="stMainBlockContainer"] {
           position: relative;
+          width: min(100%, 1480px);
+          min-height: 100vh;
+          margin-inline: auto;
+          padding: 1.35rem clamp(1rem, 2.5vw, 2.5rem) 3rem;
+          background: rgba(255, 255, 255, .96);
+          border-inline: 1px solid rgba(203, 213, 225, .72);
+          box-shadow: var(--dare-shadow);
+        }
+        [data-testid="stMainBlockContainer"] p,
+        [data-testid="stMainBlockContainer"] li,
+        [data-testid="stMainBlockContainer"] label {
+          color: var(--dare-ink);
+          line-height: 1.55;
+        }
+        [data-testid="stMainBlockContainer"] h1 {
+          color: var(--dare-navy-950);
+          font-size: clamp(1.85rem, 2.6vw, 2.65rem);
+          line-height: 1.14;
+          letter-spacing: -.025em;
+        }
+        [data-testid="stMainBlockContainer"] h2 {
+          color: var(--dare-navy-900);
+          font-size: clamp(1.45rem, 2vw, 2rem);
+          line-height: 1.2;
+        }
+        [data-testid="stMainBlockContainer"] h3 {
+          color: var(--dare-navy-800);
+          font-size: clamp(1.18rem, 1.45vw, 1.42rem);
+          line-height: 1.3;
+          margin-top: 1.6rem;
+          padding-bottom: .42rem;
+          border-bottom: 1px solid #E2E8F0;
         }
         [data-testid="stSidebar"] {
-          background: #071c35;
-          border-right: 1px solid rgba(255,255,255,.08);
+          background: linear-gradient(180deg, var(--dare-navy-950), #091F36 70%, #06182C);
+          border-right: 1px solid rgba(255, 255, 255, .1);
         }
-        [data-testid="stSidebar"] * { color: #a3a3a3; }
+        [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+          padding-top: 1rem;
+        }
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] small { color: #CBD5E1; }
         [data-testid="stSidebar"] h1,
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3,
-        [data-testid="stSidebar"] strong { color: #ffffff; }
+        [data-testid="stSidebar"] strong { color: #FFFFFF; }
         [data-testid="stSidebar"] .stRadio label {
-          padding: .55rem .7rem; border-radius: .7rem; transition: background .18s ease;
+          min-height: 44px;
+          padding: .58rem .72rem;
+          border-radius: 10px;
+          transition: background-color .16s ease, box-shadow .16s ease;
         }
-        [data-testid="stSidebar"] .stRadio label:hover { background: rgba(24,134,75,.18); }
-        [data-testid="stSidebar"] input[type="radio"] { accent-color: #18864b; }
+        [data-testid="stSidebar"] .stRadio label:hover {
+          background: rgba(15, 118, 110, .28);
+        }
+        [data-testid="stSidebar"] input[type="radio"] { accent-color: #2DD4BF; }
         [data-testid="stSidebar"] label:has(input[type="radio"]:checked) {
-          background: rgba(24,134,75,.22); box-shadow: inset 3px 0 0 #18864b;
+          background: rgba(15, 118, 110, .38);
+          box-shadow: inset 4px 0 0 #5EEAD4;
         }
-        [data-testid="stSidebar"] label:has(input[type="radio"]:checked) p { color: #ffffff; font-weight: 750; }
+        [data-testid="stSidebar"] label:has(input[type="radio"]:checked) p {
+          color: #FFFFFF;
+          font-weight: 750;
+        }
+        [data-testid="stSidebar"] [data-testid="stExpander"] {
+          background: rgba(255,255,255,.07);
+          border-color: rgba(255,255,255,.16);
+        }
         .dare-hero {
-          position: relative; overflow: hidden;
-          background: #ffffff;
-          color: #071c35; border-radius: 18px; padding: 14px 18px 17px; margin: 4px 0 22px;
-          border: 1px solid #cad9d1;
-          box-shadow: 0 10px 22px rgba(7,28,53,.12);
-          isolation: isolate;
-        }
-        .dare-hero::before {
-          display: none;
+          position: relative;
+          overflow: hidden;
+          background: var(--dare-surface);
+          border: 1px solid var(--dare-border);
+          border-radius: 16px;
+          padding: clamp(.65rem, 1.2vw, 1rem);
+          margin: 0 0 1.5rem;
+          box-shadow: 0 8px 24px rgba(7, 28, 53, .1);
         }
         .dare-hero::after {
-          content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
-          background: linear-gradient(90deg, #e45b16 0 25%, #18864b 25% 52%, #6a3a91 52% 75%, #071c35 75% 100%);
+          content: "";
+          position: absolute;
+          inset: auto 0 0;
+          height: 5px;
+          background: linear-gradient(90deg, #E45B16 0 24%, #18864B 24% 51%, #6A3A91 51% 74%, #123B5D 74% 100%);
         }
-        .dare-hero > * { position: relative; z-index: 1; }
         .dare-hero img {
-          display: block; width: 100%; max-width: 1098px; height: auto;
-          aspect-ratio: 1098 / 167; margin: 0 auto; object-fit: contain;
+          display: block;
+          width: 100%;
+          max-width: 1098px;
+          height: auto;
+          margin: 0 auto;
+          object-fit: contain;
         }
-        .dare-hero h1 {
-          margin: .1rem 0 .45rem; max-width: 76%;
-          font-size: clamp(1.9rem, 3vw, 3rem); letter-spacing: -.035em;
-          text-shadow: 0 2px 0 #121212;
-        }
-        .dare-hero p {
-          margin: 0; max-width: 72%; color: #ffffff;
-          font-size: 1.05rem; line-height: 1.6;
-        }
-        .dare-kicker {
-          display: inline-block; text-transform: uppercase; letter-spacing: .14em; font-size: .7rem;
-          font-weight: 800; color: #ffffff; background: rgba(220,38,38,.18);
-          border: 1px solid rgba(220,38,38,.72); border-radius: 999px; padding: .35rem .65rem;
-        }
+        .dare-mobile-brand { display: none; }
         .dare-card {
-          border: 1px solid #cad9d1; border-radius: 18px; background: #ffffff;
-          padding: 20px 22px; margin: 10px 0 18px;
-          box-shadow: 0 7px 16px rgba(18,18,18,.09);
+          border: 1px solid var(--dare-border);
+          border-radius: var(--dare-radius);
+          background: var(--dare-surface);
+          padding: clamp(1rem, 1.7vw, 1.4rem);
+          margin: .65rem 0 1.15rem;
+          box-shadow: 0 6px 18px rgba(7, 28, 53, .07);
         }
         .dare-chip {
-          display: inline-block; border-radius: 999px; padding: 6px 11px; margin: 2px 6px 4px 0;
-          background: #f0f7f3; color: #155e3a;
-          border: 1px solid #b8d8c7; font-size: .78rem; font-weight: 750;
+          display: inline-flex;
+          align-items: center;
+          min-height: 30px;
+          border-radius: 999px;
+          padding: .3rem .65rem;
+          margin: .12rem .35rem .2rem 0;
+          background: var(--dare-teal-pale);
+          color: var(--dare-teal-800);
+          border: 1px solid #A7D8CB;
+          font-size: .8rem;
+          font-weight: 750;
         }
         .evidence {
-          border-left: 4px solid #e45b16; padding: 10px 14px; margin: 10px 0;
-          background: #fff7ed; border-radius: 0 12px 12px 0;
+          border-left: 4px solid var(--dare-orange-700);
+          padding: .7rem .9rem;
+          margin: .65rem 0;
+          background: var(--dare-orange-pale);
+          border-radius: 0 10px 10px 0;
+          color: var(--dare-ink);
         }
-        .muted { color: #737373; }
+        .muted { color: var(--dare-muted); }
         div[data-testid="stMetric"] {
-          position: relative; overflow: hidden; background: #ffffff;
-          border: 1px solid #cad9d1; padding: 14px 15px; border-radius: 16px;
-          box-shadow: 0 8px 20px rgba(7,28,53,.06);
+          position: relative;
+          min-height: 104px;
+          overflow: hidden;
+          background: var(--dare-surface);
+          border: 1px solid var(--dare-border);
+          padding: .85rem 1rem;
+          border-radius: var(--dare-radius);
+          box-shadow: 0 5px 16px rgba(7, 28, 53, .06);
         }
         div[data-testid="stMetric"]::before {
-          content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
-          background: #18864b;
+          content: "";
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 4px;
+          background: var(--dare-teal-700);
         }
-        [data-testid="stMetricValue"] { color: #0b1f33; font-weight: 800; }
-        .stButton > button, .stDownloadButton > button {
-          border-radius: 11px; border-color: #0b2745; font-weight: 650;
-          transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+        [data-testid="stMetricLabel"] p {
+          color: var(--dare-muted);
+          font-weight: 650;
         }
-        .stButton > button:hover, .stDownloadButton > button:hover {
-          transform: translateY(-1px); border-color: #0b5b34;
-          box-shadow: 0 7px 18px rgba(11,91,52,.16);
+        [data-testid="stMetricValue"] {
+          color: var(--dare-navy-950);
+          font-size: clamp(1.45rem, 2vw, 2rem);
+          font-weight: 800;
         }
-        .stButton > button[kind="primary"] {
-          background: #18864b; border-color: #18864b; color: #ffffff;
-          box-shadow: 0 8px 20px rgba(24,134,75,.22);
+        .stButton > button,
+        .stDownloadButton > button,
+        [data-testid="stFormSubmitButton"] > button {
+          min-height: 42px;
+          border: 1px solid var(--dare-navy-800);
+          border-radius: 10px;
+          background: #FFFFFF;
+          color: var(--dare-navy-900);
+          font-weight: 700;
+          line-height: 1.2;
+          transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
         }
-        .stButton > button[kind="primary"]:hover {
-          background: #0b5b34; border-color: #0b5b34; color: #ffffff;
+        .stButton > button:hover,
+        .stDownloadButton > button:hover,
+        [data-testid="stFormSubmitButton"] > button:hover {
+          transform: translateY(-1px);
+          background: #F0FDFA;
+          border-color: var(--dare-teal-700);
+          color: var(--dare-teal-800);
+          box-shadow: 0 6px 16px rgba(15, 118, 110, .16);
+        }
+        .stButton > button:focus-visible,
+        .stDownloadButton > button:focus-visible,
+        [data-testid="stFormSubmitButton"] > button:focus-visible {
+          outline: 3px solid var(--dare-focus);
+          outline-offset: 2px;
+        }
+        .stButton > button[kind="primary"],
+        [data-testid="stFormSubmitButton"] > button[kind="primary"] {
+          background: var(--dare-teal-700);
+          border-color: var(--dare-teal-700);
+          color: #FFFFFF;
+          box-shadow: 0 7px 18px rgba(15, 118, 110, .2);
+        }
+        .stButton > button[kind="primary"]:hover,
+        [data-testid="stFormSubmitButton"] > button[kind="primary"]:hover {
+          background: var(--dare-teal-800);
+          border-color: var(--dare-teal-800);
+          color: #FFFFFF;
+        }
+        button:disabled,
+        .stDownloadButton > button:disabled {
+          opacity: .62;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
         }
         [data-testid="stFileUploaderDropzone"] {
-          background: #f5f5f5;
-          border: 1.5px dashed #0b2745; border-radius: 16px;
+          min-height: 132px;
+          background: var(--dare-surface-alt);
+          border: 1.5px dashed var(--dare-border-strong);
+          border-radius: var(--dare-radius);
         }
-        [data-baseweb="tab-list"] { gap: .35rem; background: #f1f1f2; padding: .35rem; border-radius: 13px; }
-        [data-baseweb="tab"] { border-radius: 9px; padding: .55rem .85rem; }
+        [data-testid="stFileUploaderDropzone"]:hover {
+          background: #F0FDFA;
+          border-color: var(--dare-teal-700);
+        }
+        [data-baseweb="tab-list"] {
+          gap: .3rem;
+          overflow-x: auto;
+          scrollbar-width: thin;
+          background: #EEF2F6;
+          padding: .32rem;
+          border-radius: 11px;
+        }
+        [data-baseweb="tab"] {
+          flex: 0 0 auto;
+          min-height: 42px;
+          border-radius: 8px;
+          padding: .5rem .8rem;
+          color: var(--dare-muted);
+        }
         [data-baseweb="tab"][aria-selected="true"] {
-          background: white; color: #155e3a; box-shadow: inset 0 -3px 0 #18864b, 0 3px 10px rgba(7,28,53,.08);
+          background: #FFFFFF;
+          color: var(--dare-teal-800);
+          box-shadow: inset 0 -3px 0 var(--dare-teal-700), 0 2px 8px rgba(7, 28, 53, .08);
         }
-        [data-testid="stExpander"] { border: 1px solid #cad9d1; border-radius: 14px; background: #ffffff; }
+        [data-testid="stExpander"] {
+          overflow: hidden;
+          border: 1px solid var(--dare-border);
+          border-radius: 11px;
+          background: var(--dare-surface);
+        }
+        [data-testid="stExpander"] summary:hover {
+          background: var(--dare-surface-alt);
+        }
         [data-baseweb="input"] > div,
         [data-baseweb="textarea"] > div,
-        [data-baseweb="select"] > div {
-          background: #ffffff !important; border-color: #6f8479 !important; border-width: 1px !important;
-          border-radius: 10px !important;
+        [data-baseweb="select"] > div,
+        [data-baseweb="base-input"] {
+          min-height: 42px;
+          background: #FFFFFF !important;
+          border-color: var(--dare-border-strong) !important;
+          border-width: 1px !important;
+          border-radius: 9px !important;
+          color: var(--dare-ink) !important;
+        }
+        [data-baseweb="input"] input,
+        [data-baseweb="textarea"] textarea,
+        [data-baseweb="select"] input {
+          color: var(--dare-ink) !important;
+          caret-color: var(--dare-teal-700);
         }
         [data-baseweb="input"] > div:focus-within,
         [data-baseweb="textarea"] > div:focus-within,
         [data-baseweb="select"] > div:focus-within {
-          border-color: #18864b !important; border-width: 2px !important;
-          box-shadow: 0 0 0 2px rgba(24,134,75,.10) !important;
+          border-color: var(--dare-blue-600) !important;
+          border-width: 2px !important;
+          box-shadow: 0 0 0 3px var(--dare-focus) !important;
         }
+        [role="listbox"], [data-baseweb="popover"] {
+          color: var(--dare-ink);
+        }
+        [role="option"] { min-height: 40px; }
         [data-testid="stAlert"] {
-          border-radius: 13px; border: 1px solid #cad9d1; background: #f5f8f6; color: #0b1f33;
+          border: 1px solid var(--dare-border);
+          border-left-width: 5px;
+          border-radius: 10px;
+          background: #F8FAFC;
+          color: var(--dare-ink);
         }
-        @media (max-width: 900px) {
-          .dare-hero::before { width: 34%; }
-          .dare-hero h1, .dare-hero p { max-width: 82%; }
+        [data-testid="stDataFrame"],
+        [data-testid="stTable"] {
+          overflow: hidden;
+          border: 1px solid var(--dare-border);
+          border-radius: 10px;
+          background: #FFFFFF;
         }
-        @media (max-width: 640px) {
-          .dare-hero { padding: 10px 10px 13px; border-radius: 14px; overflow-x: auto; }
-          .dare-hero img { width: 720px; max-width: none; }
+        [data-testid="stImage"] img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 10px;
+        }
+        [data-testid="stProgress"] > div > div > div {
+          background-color: var(--dare-teal-700);
+        }
+        hr { border-color: var(--dare-border); }
+        a { color: #1D4ED8; text-underline-offset: 2px; }
+        a:hover { color: #1E40AF; }
+        @media (max-width: 980px) {
+          [data-testid="stSidebar"] {
+            min-width: 250px !important;
+            max-width: 250px !important;
+          }
+          [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+            width: 250px !important;
+          }
+          [data-testid="stMainBlockContainer"] {
+            padding: 1rem 1rem 2.5rem;
+            border-inline: 0;
+          }
+          div[data-testid="stMetric"] { min-height: 94px; }
+        }
+        @media (max-width: 700px) {
+          html { font-size: 15px; }
+          [data-testid="stMainBlockContainer"] { padding: .8rem .75rem 2rem; }
+          .dare-hero { padding: 0; border-radius: 12px; }
+          .dare-hero > img { display: none; }
+          .dare-mobile-brand {
+            display: block;
+            padding: 1.05rem 1rem 1.15rem;
+            background: linear-gradient(135deg, var(--dare-navy-950), var(--dare-navy-800));
+          }
+          .dare-mobile-brand strong {
+            display: block;
+            color: #FFFFFF;
+            font-size: clamp(1.65rem, 8vw, 2.15rem);
+            line-height: 1.05;
+            letter-spacing: -.025em;
+          }
+          .dare-mobile-brand span {
+            display: block;
+            margin-top: .45rem;
+            color: #E2E8F0;
+            font-size: .88rem;
+            line-height: 1.4;
+          }
+          [data-baseweb="tab-list"] { border-radius: 9px; }
+          .stButton > button, .stDownloadButton > button { width: 100%; }
+          [data-testid="stMetricValue"] { font-size: 1.45rem; }
+        }
+        @media (max-width: 420px) {
+          html { font-size: 14.5px; }
+          [data-testid="stMainBlockContainer"] { padding-inline: .55rem; }
+          .dare-card { padding: .85rem; }
+          div[data-testid="stMetric"] { padding: .75rem .8rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            scroll-behavior: auto !important;
+            transition-duration: .01ms !important;
+            animation-duration: .01ms !important;
+            animation-iteration-count: 1 !important;
+          }
+        }
+        @media print {
+          [data-testid="stSidebar"], [data-testid="stHeader"] { display: none !important; }
+          .stApp, [data-testid="stMainBlockContainer"] {
+            background: #FFFFFF !important;
+            box-shadow: none !important;
+            border: 0 !important;
+          }
         }
         </style>
         """,
@@ -374,7 +624,7 @@ def configure_page() -> None:
     if not re.fullmatch(r"#[0-9A-Fa-f]{6}", str(page_background)):
         page_background = "#F4F7F5"
     st.markdown(
-        f"<style>.stApp {{ background-color: {page_background}; }}</style>",
+        f"<style>:root {{ --dare-page-bg: {page_background}; }}</style>",
         unsafe_allow_html=True,
     )
 
@@ -471,6 +721,10 @@ def hero() -> None:
             f"""
             <div class="dare-hero">
               <img src="{banner_uri}" alt="DARE-Arbo framework: purpose, web-based assessment features, reproducibility, transparency, and shareable reports">
+              <div class="dare-mobile-brand" aria-label="DARE-Arbo Design, Assay and Reporting Evaluation framework">
+                <strong>DARE-Arbo</strong>
+                <span>Design, Assay and Reporting Evaluation for reproducible arbovirus evidence</span>
+              </div>
             </div>
             """,
             unsafe_allow_html=True,
