@@ -15,11 +15,12 @@ import re
 from typing import Any, BinaryIO, Iterable, Mapping
 
 
-CORE_API_VERSION = "2026.09.10.1"
+CORE_API_VERSION = "2026.09.11.1"
+DESIGNER_REPORT_VERSION = "2026.09.11.1"
 
 GUIDE_VERSION = (
     "DARE-Arbo endpoint-first application principle + Design Library rules "
-    "(workspace version, 2026-09-10)"
+    "(workspace version, 2026-09-11)"
 )
 
 
@@ -1157,9 +1158,10 @@ def _study_design_surveillance_outputs(plan: Mapping[str, Any]) -> list[str]:
     estimator_mode = str(
         plan.get("stream_estimator_mode") or "Separate active and passive estimates"
     )
-    if estimator_mode.startswith("Combined"):
+    integration_prespecified = bool(plan.get("stream_integration_plan"))
+    if estimator_mode.startswith("Combined") and integration_prespecified:
         return ["Hybrid adjusted"]
-    if estimator_mode.startswith("Separate and combined"):
+    if estimator_mode.startswith("Separate and combined") and integration_prespecified:
         return ["Active surveillance", "Passive surveillance", "Hybrid adjusted"]
     return ["Active surveillance", "Passive surveillance"]
 
@@ -1339,6 +1341,515 @@ def evaluate_study_design_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         "virus_multiplexing": multiplex,
         "hybrid_surveillance": hybrid_surveillance,
     }
+
+
+def _designer_value(value: Any, fallback: str = "Not yet specified") -> str:
+    """Return a report-safe planning value without inventing missing content."""
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text and text not in {"0", "None", "null", "NaN"} else fallback
+
+
+def _designer_confirmation_assays(value: Any) -> list[str]:
+    if isinstance(value, str):
+        candidates = re.split(r"[;,]", value)
+    elif isinstance(value, Iterable):
+        candidates = [str(item) for item in value]
+    else:
+        candidates = []
+    return list(dict.fromkeys(item.strip() for item in candidates if item.strip()))
+
+
+def _designer_reporting_commitments(plan: Mapping[str, Any]) -> list[dict[str, str]]:
+    checks = [
+        ("Observed endpoint numerator and denominator", "numerator_denominator_reporting"),
+        ("Participant/specimen and verification-stratum flow", "flow_reporting"),
+        ("Assay manufacturer, protocol, cutoffs, controls and interpretation", "assay_reporting"),
+        ("Nonresponse, exclusions, missing specimens and incomplete testing", "missingness_reporting"),
+        ("Estimator, weights, standardization and assay adjustment", "estimator_reporting"),
+        ("Protocol, codebook, analysis code or machine-readable outputs", "reproducibility_reporting"),
+    ]
+    if len(_study_design_path_keys(plan)) > 1:
+        checks.append(("Endpoint-specific results retained separately", "mixed_endpoint_reporting_plan"))
+    if len(_study_design_viruses(plan)) > 1:
+        checks.append(("Virus-specific and co-detection reporting", "multiplex_reporting_plan"))
+
+    commitments: list[dict[str, str]] = []
+    for label, key in checks:
+        raw = plan.get(key)
+        if raw is True or str(raw).strip().lower() in {"planned", "complete", "yes", "true"}:
+            status = "Planned"
+        elif str(raw).strip().lower() in {"partial", "partially specified"}:
+            status = "Partially specified"
+        elif str(raw).strip().lower() in {"n/a", "not applicable"}:
+            status = "Not applicable"
+        else:
+            status = "Not yet specified"
+        commitments.append({"item": label, "status": status})
+    return commitments
+
+
+def _designer_estimator_type(path_key: str, summary_estimator: str) -> str:
+    if path_key in {"serology_validation", "molecular_validation"}:
+        return "Assay-performance estimator"
+    if path_key.endswith("tier_b"):
+        return "Complete screening-confirmation estimator"
+    if path_key.endswith("tier_c"):
+        return "Representative verification-subsample estimator"
+    if path_key.endswith("tier_d"):
+        return "Conditional selected-subset estimator"
+    if "neutralizing" in summary_estimator.lower():
+        return "Direct neutralizing-antibody prevalence estimator"
+    if "confirmed-active" in summary_estimator.lower() or "confirmed active" in summary_estimator.lower():
+        return "Direct-detection prevalence estimator"
+    return "Apparent prevalence estimator"
+
+
+def _designer_stream_population(plan: Mapping[str, Any], stream: str) -> str:
+    target = _designer_value(plan.get("target_population"))
+    if stream == "Active surveillance":
+        return _designer_value(plan.get("active_stream_definition"), target)
+    if stream == "Passive surveillance":
+        return _designer_value(plan.get("passive_stream_definition"), target)
+    if stream == "Hybrid adjusted":
+        active = _designer_value(plan.get("active_stream_definition"), target)
+        passive = _designer_value(plan.get("passive_stream_definition"), target)
+        return f"Integrated active source: {active}; passive source: {passive}"
+    return target
+
+
+def _designer_count_definitions(
+    path_key: str,
+    primary_assay: str,
+) -> tuple[str, str]:
+    """Translate codebook count labels into planned participant-level definitions."""
+    tested_by = f"Participants tested by {primary_assay}" if primary_assay else ""
+    if path_key == "serology_apparent":
+        numerator = (
+            "IgG-positive participants"
+            if "igg" in primary_assay.lower()
+            else "Primary-serology-positive participants"
+        )
+        return numerator, tested_by
+    if path_key == "neutralization_universal":
+        return "Neutralization-positive participants", tested_by
+    if path_key == "igm_only":
+        return "IgM-positive participants", tested_by
+    if path_key == "ns1_only":
+        return "NS1-positive participants", tested_by
+    if path_key == "mixed_serology_only":
+        return "Participants positive by the explicitly defined composite serologic rule", tested_by
+    if path_key == "confirmed_active_universal":
+        return "Molecularly/direct-detection-positive participants", tested_by
+    if path_key == "serology_tier_b":
+        return (
+            "Neutralization-confirmed positives",
+            "Total population entering the complete screening-confirmation algorithm",
+        )
+    if path_key == "confirmed_active_tier_b":
+        return (
+            "Molecularly confirmed positives",
+            "Total population entering the complete screening-confirmation algorithm",
+        )
+    if path_key == "serology_tier_c":
+        return (
+            "Weighted/screen-conditioned neutralization-confirmed positives",
+            "Total tested plus screening-positive and representative verification-subset counts",
+        )
+    if path_key == "confirmed_active_tier_c":
+        return (
+            "Weighted/screen-conditioned molecularly confirmed positives",
+            "Total tested plus screening-positive and representative verification-subset counts",
+        )
+    if path_key == "confirmed_active_tier_d":
+        return (
+            "Observed molecularly confirmed positives in the selected subset",
+            "Participants molecularly tested in the selected conditional subset",
+        )
+    if path_key in {"serology_validation", "molecular_validation"}:
+        return (
+            "Reference-confirmed positive and negative classifications",
+            "Participants/specimens retested within the prespecified positive and negative verification strata",
+        )
+    path = SYNTHESIS_PATHS_BY_KEY[path_key]
+    return path.numerator, path.denominator
+
+
+def _designer_analysis_unit(
+    plan: Mapping[str, Any],
+    evaluated: Mapping[str, Any],
+    base_unit: Mapping[str, Any],
+    index: int,
+) -> dict[str, Any]:
+    """Normalize one stream-virus-endpoint pathway and validate estimator readiness."""
+    path_key = str(base_unit.get("synthesis_path_key") or "")
+    path = SYNTHESIS_PATHS_BY_KEY[path_key]
+    pathway_assays = plan.get("pathway_assays")
+    if not isinstance(pathway_assays, Mapping):
+        pathway_assays = {}
+    selected_assays = pathway_assays.get(path_key, {})
+    if not isinstance(selected_assays, Mapping):
+        selected_assays = {}
+    path_index = _study_design_path_keys(plan).index(path_key)
+    primary_assay = _designer_value(
+        selected_assays.get("primary_assay")
+        or (plan.get("primary_assay") if path_index == 0 else ""),
+        "",
+    )
+    confirmation_value = (
+        selected_assays.get("confirmatory_assay")
+        or (plan.get("confirmatory_assay") if path_index == 0 else "")
+    )
+    confirmatory_assays = _designer_confirmation_assays(confirmation_value)
+
+    estimand_overrides = plan.get("pathway_estimands")
+    if not isinstance(estimand_overrides, Mapping):
+        estimand_overrides = {}
+    overrides = estimand_overrides.get(path_key, {})
+    if not isinstance(overrides, Mapping):
+        overrides = {}
+
+    numerator, denominator = _designer_count_definitions(path_key, primary_assay)
+    summary_estimator = path.summary_estimator
+    if "numerator" in overrides:
+        numerator = str(overrides.get("numerator") or "").strip()
+    if "denominator" in overrides:
+        denominator = str(overrides.get("denominator") or "").strip()
+    if "summary_estimator" in overrides:
+        summary_estimator = str(overrides.get("summary_estimator") or "").strip()
+
+    profile = assay_path_profile(path_key)
+    staged = path_key in CONFIRMATORY_REQUIRED_SYNTHESIS_PATHS
+    selective_primary_endpoint = path_key == "serology_tier_d"
+    if selective_primary_endpoint:
+        # Selective PRNT confirmation does not replace the population IgG
+        # numerator unless a separate neutralization estimand is declared.
+        numerator = str(overrides.get("numerator", "Primary positive") or "").strip()
+        denominator = str(overrides.get("denominator", "Total tested") or "").strip()
+        summary_estimator = str(overrides.get("summary_estimator", "Apparent prevalence") or "").strip()
+        endpoint_defining_assay = primary_assay
+        screening_assay = primary_assay
+        confirmation_path = (
+            "Selected screening-positive specimens receive neutralization as supporting selective confirmation; "
+            "this does not overwrite the population primary-serology endpoint."
+        )
+        interpretation = (
+            "Retain the primary-serology numerator and tested denominator for population prevalence. "
+            "Create a separate neutralizing-antibody unit only when PRNT has its own defined tested population and n/N."
+        )
+    elif staged:
+        endpoint_defining_assay = "; ".join(confirmatory_assays)
+        screening_assay = primary_assay
+        confirmation_path = path.testing_strategy
+        interpretation = ENDPOINTS_BY_KEY[path.endpoint_key].interpretation
+    else:
+        endpoint_defining_assay = primary_assay
+        screening_assay = ""
+        confirmation_path = (
+            "No confirmation is required for this endpoint definition."
+            if not confirmatory_assays
+            else "Linked downstream assay(s) are supporting or independently endpoint-defining and do not replace the declared primary endpoint."
+        )
+        interpretation = ENDPOINTS_BY_KEY[path.endpoint_key].interpretation
+
+    stream = str(base_unit.get("surveillance_stream") or "").strip()
+    virus = str(base_unit.get("virus") or "").strip()
+    endpoint = str(base_unit.get("endpoint") or "").strip()
+    missing: list[str] = []
+    required_values = [
+        ("study/surveillance stream", stream and "not specified" not in stream.lower()),
+        ("virus", virus and "not specified" not in virus.lower()),
+        ("synthesis endpoint", endpoint),
+        ("endpoint-defining assay", endpoint_defining_assay),
+        ("planned numerator definition", numerator),
+        ("estimator denominator definition", denominator),
+        ("summary estimator", summary_estimator),
+    ]
+    for label, value in required_values:
+        if not value:
+            missing.append(label)
+    if staged:
+        if not screening_assay:
+            missing.append("screening assay")
+        if not confirmatory_assays:
+            missing.append("confirmatory assay")
+        if path.verification_design in {"representative_positive_subset", "two_phase_validation"} and not plan.get("testing_denominator_plan"):
+            missing.append("verification-stratum counts and weighting rule")
+
+    adjustment = _designer_value(
+        overrides.get("adjustment_weighting")
+        or plan.get("weighting_adjustment_plan"),
+        "Not yet specified" if path.verification_design == "representative_positive_subset" else "Not applicable / none specified",
+    )
+    reporting_requirements = [
+        "Observed endpoint numerator and matched denominator",
+        "Participant/specimen flow and missing testing",
+        "Assay manufacturer, protocol, cutoffs, controls and interpretation",
+        "Estimator and any weights, standardization or assay adjustment",
+    ]
+    if staged:
+        reporting_requirements.insert(1, "Screening and confirmation strata, including incomplete confirmation")
+
+    sampling_frame = _designer_value(
+        plan.get("sampling_frame_description") or evaluated.get("sampling_frame_category")
+    )
+    return {
+        "id": f"AU-{index:03d}",
+        "surveillanceStream": stream or "Not yet specified",
+        "virus": virus or "Not yet specified",
+        "synthesisEndpoint": endpoint or "Not yet specified",
+        "synthesisPathKey": path_key,
+        "population": {
+            "targetPopulation": _designer_value(plan.get("target_population")),
+            "samplingFrame": sampling_frame,
+            "eligiblePopulation": _designer_stream_population(plan, stream),
+        },
+        "assayPathway": {
+            "testingStrategy": path.testing_strategy,
+            "primaryEndpointDefiningAssay": _designer_value(endpoint_defining_assay),
+            "screeningAssay": _designer_value(screening_assay, "Not applicable"),
+            "confirmatoryAssays": confirmatory_assays,
+            "confirmationPath": confirmation_path,
+            "confirmationCoverage": profile["confirmation_coverage"],
+        },
+        "estimand": {
+            "observedNumerator": _designer_value(numerator),
+            "estimatorDenominator": _designer_value(denominator),
+            "estimatorType": _designer_estimator_type(path_key, summary_estimator),
+            "summaryEstimator": _designer_value(summary_estimator),
+            "adjustmentWeighting": adjustment,
+            "interpretation": interpretation,
+        },
+        "readinessStatus": "Estimator ready" if not missing else "Estimator definition incomplete",
+        "outstandingFields": missing,
+        "reportingRequirements": reporting_requirements,
+    }
+
+
+def generate_designer_narrative(report_model: Mapping[str, Any]) -> dict[str, str]:
+    """Generate reproducible protocol-oriented prose from a normalized report model."""
+    study = report_model["study"]
+    design = report_model["surveillanceDesign"]
+    endpoint_design = report_model["endpointDesign"]
+    coverage = report_model["planningCoverage"]
+    units = list(report_model.get("analysisUnits") or [])
+    commitments = list(report_model.get("reportingCommitments") or [])
+    priorities = list(report_model.get("planningPriorities") or [])
+
+    viruses = ", ".join(study.get("virusTargets") or []) or "no virus target yet specified"
+    endpoints = list(dict.fromkeys(unit["synthesisEndpoint"] for unit in units))
+    endpoint_text = "; ".join(endpoints) or "no synthesis endpoint yet specified"
+    stream_text = ", ".join(design.get("analysisStreams") or []) or "no analysis stream yet specified"
+    if str(design.get("surveillanceMode") or "").startswith("Hybrid"):
+        integration = (
+            "Integration is prespecified and any combined estimate must retain its declared source/stream adjustment."
+            if design.get("integrationPrespecified")
+            else "No integrated estimator is prespecified; active and passive streams therefore remain separate."
+        )
+    else:
+        integration = "The plan contains one surveillance stream, so no pooling of unlike active and passive sources is implied."
+    design_summary = (
+        f"The planned study, '{study['title']}', is intended to estimate {endpoint_text} for {viruses}. "
+        f"The estimand target is {study['targetPopulation']}. The selected architecture is {design['surveillanceArchitecture']} "
+        f"operating as {design['surveillanceMode']}. The resulting analysis streams are {stream_text}. {integration} "
+        "This is a prospective planning description and does not constitute a completed validity or risk-of-bias judgement."
+    )
+
+    sample_size = study.get("plannedSampleSize")
+    sample_text = str(sample_size) if sample_size not in (None, "", 0) else "not yet specified"
+    alignment = design.get("targetFrameAlignment") or {}
+    population_coverage_summary = (
+        f"The target population is classified as {study['targetPopulationClass']}. The operational source frame is "
+        f"{design['samplingFrame']}, while selection from that frame uses {design['recruitmentMethod']}. "
+        f"The target-frame relationship is recorded as {alignment.get('status', 'unresolved')}. "
+        f"The documented coverage rationale is {str(design['samplingFrameCoverageJustification']).rstrip('.')}. The planned recruited sample size is {sample_text}. "
+        "Target population, source frame and recruitment method are retained as separate concepts so that a facility, registry or archived-specimen source is not mistaken for the population to which the estimand applies."
+    )
+
+    pathway_summaries: list[str] = []
+    seen_paths: set[str] = set()
+    for unit in units:
+        path_key = unit["synthesisPathKey"]
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+        assay = unit["assayPathway"]
+        estimand = unit["estimand"]
+        confirms = ", ".join(assay["confirmatoryAssays"]) or "none"
+        pathway_summaries.append(
+            f"For {unit['synthesisEndpoint']}, {assay['primaryEndpointDefiningAssay']} supplies the endpoint definition; "
+            f"the screening assay is {assay['screeningAssay']} and confirmatory assay(s) are {confirms}. "
+            f"The planned numerator is {estimand['observedNumerator']}, the denominator is {estimand['estimatorDenominator']}, "
+            f"and the supported summary estimator is {estimand['summaryEstimator']}."
+        )
+    assay_architecture_summary = (
+        " ".join(pathway_summaries)
+        if pathway_summaries
+        else "The assay architecture is not yet sufficiently specified to generate an endpoint pathway."
+    )
+    assay_architecture_summary += (
+        " Assay roles are assigned from the estimand architecture rather than test order or perceived specificity; a linked orthogonal assay does not automatically replace the primary endpoint numerator."
+    )
+
+    ready_count = sum(unit["readinessStatus"] == "Estimator ready" for unit in units)
+    incomplete_count = len(units) - ready_count
+    estimator_readiness_summary = (
+        f"The Designer creates {endpoint_design['analysisUnitCount']} study-virus-estimand analysis unit(s) across the declared stream, virus and endpoint combinations. "
+        f"{ready_count} unit(s) are estimator ready and {incomplete_count} are incomplete. Each ready unit has a declared stream, virus, biological endpoint, "
+        "endpoint-defining assay, planned observed numerator, estimator denominator and estimator. These are definitions for future counts, not observed study results. "
+        "Representative verification designs additionally require verification-stratum counts and a prespecified weighting or adjustment rule before unrestricted population interpretation."
+    )
+
+    planned_count = sum(item["status"] == "Planned" for item in commitments)
+    priority_text = (
+        f"The current model identifies {len(priorities)} planning priority item(s), led by: {'; '.join(item.rstrip('.') for item in priorities[:3])}."
+        if priorities
+        else "No unresolved planning priorities were identified by the current Designer checklist."
+    )
+    reproducibility_summary = (
+        f"Standard reporting commitments are planned for {planned_count} of {len(commitments)} listed areas. The protocol should retain participant and specimen flow, "
+        "verification strata, assay manufacturer and interpretation rules, missingness, estimator specification, weighting or adjustment, and machine-readable outputs. "
+        f"Endpoint-specific and virus-specific results remain distinct whenever applicable. {priority_text} Planning coverage reflects documentation completeness within the Designer and is not a risk-of-bias score."
+    )
+
+    protocol_handoff_summary = (
+        "This report documents a planned design. It does not replace a protocol, statistical analysis plan, ethics review, laboratory SOP or completed DARE-Arbo risk-of-bias assessment. "
+        "Before implementation, resolve every planning priority and verify that each virus-endpoint-stream analysis unit has a matched planned numerator, denominator, assay pathway and estimator."
+    )
+    return {
+        "designSummary": design_summary,
+        "populationCoverageSummary": population_coverage_summary,
+        "assayArchitectureSummary": assay_architecture_summary,
+        "estimatorReadinessSummary": estimator_readiness_summary,
+        "reproducibilitySummary": reproducibility_summary,
+        "protocolHandoffSummary": protocol_handoff_summary,
+    }
+
+
+def build_designer_report_model(
+    designer_state: Mapping[str, Any],
+    readiness: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a deterministic, serializable Designer report model."""
+    plan = dict(designer_state)
+    evaluated = dict(readiness or evaluate_study_design_plan(plan))
+    is_surveillance = str(plan.get("report_scope") or "surveillance").lower() != "study"
+    target = _designer_value(plan.get("target_population"))
+    target_class = _designer_value(evaluated.get("target_population_category"))
+    sampling_frame = _designer_value(
+        plan.get("sampling_frame_description") or evaluated.get("sampling_frame_category")
+    )
+    viruses = list(evaluated.get("viruses") or _study_design_viruses(plan))
+    units = [
+        _designer_analysis_unit(plan, evaluated, unit, index)
+        for index, unit in enumerate(evaluated.get("analysis_units") or [], start=1)
+    ]
+    commitments = _designer_reporting_commitments(plan)
+
+    priorities: list[str] = []
+    if target == "Not yet specified":
+        priorities.append("Define the target population to which each planned estimand will apply.")
+    if target_class == "Not yet specified":
+        priorities.append("Classify the target population using the DARE-Arbo controlled vocabulary.")
+    if sampling_frame == "Not yet specified":
+        priorities.append("Define the source or sampling frame from which eligible participants or specimens can enter.")
+    if not str(plan.get("sampling_recruitment_method") or "").strip():
+        priorities.append("Specify how participants or specimens will be selected from the source frame.")
+    if str(plan.get("surveillance_mode") or "").startswith("Hybrid"):
+        if not str(plan.get("active_stream_definition") or "").strip():
+            priorities.append("Define the source population for the active surveillance stream.")
+        if not str(plan.get("passive_stream_definition") or "").strip():
+            priorities.append("Define the source population for the passive surveillance stream.")
+        if not plan.get("stream_integration_plan"):
+            priorities.append("Prespecify whether active and passive estimates remain separate and how any integrated estimator will handle denominators, overlap and weighting.")
+    for unit in units:
+        for field in unit["outstandingFields"]:
+            priorities.append(
+                f"Define the {field} for the {unit['virus']} {unit['synthesisEndpoint']} estimand in the {unit['surveillanceStream']} stream."
+            )
+    reporting_priority_labels = {
+        "Observed endpoint numerator and denominator": "Commit to reporting the observed endpoint numerator and its matched denominator.",
+        "Participant/specimen and verification-stratum flow": "Commit to reporting participant/specimen flow and every verification stratum.",
+        "Assay manufacturer, protocol, cutoffs, controls and interpretation": "Define assay manufacturer, protocol, cutoff, control and interpretation reporting requirements.",
+        "Nonresponse, exclusions, missing specimens and incomplete testing": "Prespecify reporting of nonresponse, exclusions, missing specimens and incomplete testing.",
+        "Estimator, weights, standardization and assay adjustment": "Prespecify the estimator and reporting of weights, standardization and assay adjustment.",
+        "Protocol, codebook, analysis code or machine-readable outputs": "Specify which protocol, codebook, analysis code or machine-readable outputs will be shared.",
+        "Endpoint-specific results retained separately": "Commit to reporting endpoint-specific flows, counts, estimates and missingness separately.",
+        "Virus-specific and co-detection reporting": "Commit to virus-specific and co-detection reporting without collapsing targets.",
+    }
+    for commitment in commitments:
+        if commitment["status"] not in {"Planned", "Not applicable"}:
+            priorities.append(reporting_priority_labels[commitment["item"]])
+    priorities = list(dict.fromkeys(priorities))
+
+    pillar_lookup = evaluated.get("pillars") or {}
+    planning_coverage = {
+        "overallStatus": (
+            "Planning framework complete"
+            if float(evaluated.get("balance_floor") or 0) >= 100
+            and all(unit["readinessStatus"] == "Estimator ready" for unit in units)
+            and not priorities
+            else "Planning framework has outstanding elements"
+        ),
+        "coverageFloor": float(evaluated.get("balance_floor") or 0),
+        "studyDesignCoverage": float((pillar_lookup.get("Study design") or {}).get("percentage") or 0),
+        "assayDesignCoverage": float((pillar_lookup.get("Assay design") or {}).get("percentage") or 0),
+        "reportingCoverage": float((pillar_lookup.get("Standard reporting") or {}).get("percentage") or 0),
+        "outstandingItems": priorities,
+    }
+    model: dict[str, Any] = {
+        "reportVersion": DESIGNER_REPORT_VERSION,
+        "generatedAt": _designer_value(plan.get("created_at"), "Not recorded"),
+        "reportTitle": "DARE-Arbo Surveillance Study Design Report" if is_surveillance else "DARE-Arbo Study Design Report",
+        "study": {
+            "title": _designer_value(plan.get("study_title"), "Untitled study design"),
+            "studyType": "Surveillance study" if is_surveillance else "Study",
+            "countryOrSetting": _designer_value(plan.get("country_or_setting")),
+            "targetPopulation": target,
+            "targetPopulationClass": target_class,
+            "virusCoverage": _designer_value(plan.get("virus_coverage")),
+            "virusTargets": viruses,
+            "plannedSampleSize": int(plan.get("planned_sample_size") or 0) or None,
+        },
+        "surveillanceDesign": {
+            "surveillanceMode": _designer_value(plan.get("surveillance_mode")),
+            "surveillanceArchitecture": _designer_value(plan.get("surveillance_architecture")),
+            "samplingFrame": sampling_frame,
+            "samplingFrameCoverageJustification": _designer_value(plan.get("sampling_frame_coverage_justification")),
+            "targetFrameAlignment": dict(evaluated.get("target_frame_alignment") or {}),
+            "recruitmentMethod": _designer_value(plan.get("sampling_recruitment_method")),
+            "activeSource": _designer_value(plan.get("active_stream_definition"), "Not applicable"),
+            "passiveSource": _designer_value(plan.get("passive_stream_definition"), "Not applicable"),
+            "streamAnalysis": _designer_value(plan.get("stream_estimator_mode")),
+            "analysisStreams": list(evaluated.get("surveillance_outputs") or []),
+            "integrationPrespecified": bool(plan.get("stream_integration_plan")),
+        },
+        "endpointDesign": {
+            "endpointDesignType": _designer_value(plan.get("endpoint_design")),
+            "analysisUnitCount": len(units),
+        },
+        "planningCoverage": planning_coverage,
+        "pillarDetails": {
+            pillar: {
+                "earned": values.get("earned", 0),
+                "maximum": values.get("maximum", 0),
+                "percentage": values.get("percentage", 0),
+                "missing": list(values.get("missing") or []),
+            }
+            for pillar, values in pillar_lookup.items()
+        },
+        "analysisUnits": units,
+        "reportingCommitments": commitments,
+        "planningPriorities": priorities,
+    }
+    model["narrative"] = generate_designer_narrative(model)
+    return model
+
+
+# Compatibility alias for integrations that mirror the report-model name in
+# the implementation specification.
+buildDesignerReportModel = build_designer_report_model
 
 
 def render_study_design_png(
@@ -1594,7 +2105,7 @@ def render_study_design_png(
     return output.getvalue()
 
 
-def render_surveillance_design_report_pdf(
+def _render_surveillance_design_report_pdf_legacy(
     plan: Mapping[str, Any],
     readiness: Mapping[str, Any] | None = None,
     design_png: bytes | None = None,
@@ -1942,6 +2453,380 @@ def render_surveillance_design_report_pdf(
 
     document.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
     return output.getvalue()
+
+
+def render_designer_report_pdf(
+    report_model: Mapping[str, Any],
+    design_png: bytes | None = None,
+    presentation_colors: Mapping[str, str] | None = None,
+    branding_logo: bytes | None = None,
+    partner_logo: bytes | None = None,
+) -> bytes:
+    """Render a normalized Designer report model as a branded A4 PDF."""
+    try:
+        from reportlab.lib import colors as pdf_colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            Image as PdfImage,
+            KeepTogether,
+            PageBreak,
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Designer report generation requires the 'reportlab' package.") from exc
+
+    theme = resolve_overview_colors(presentation_colors)
+    navy = pdf_colors.HexColor(theme["navy"])
+    primary = pdf_colors.HexColor(theme["teal"])
+    ink = pdf_colors.HexColor(theme["ink"])
+    muted = pdf_colors.HexColor(theme["muted"])
+    pale = pdf_colors.HexColor(theme["mint"])
+    border = pdf_colors.HexColor(theme["border"])
+    background = pdf_colors.HexColor(theme["background"])
+
+    def clean(value: Any) -> str:
+        text = str(value if value not in (None, "") else "Not yet specified")
+        replacements = {
+            "\u2013": "-", "\u2014": "-", "\u2011": "-", "\u2212": "-",
+            "\u2192": "->", "\u2265": ">=", "\u2264": "<=", "\u00d7": "x",
+        }
+        for source, target in replacements.items():
+            text = text.replace(source, target)
+        return html.escape(text)
+
+    report_title = str(report_model.get("reportTitle") or "DARE-Arbo Study Design Report")
+    output = BytesIO()
+    document = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=0.55 * inch,
+        leftMargin=0.55 * inch,
+        topMargin=0.68 * inch,
+        bottomMargin=0.76 * inch,
+        title=report_title,
+        author="DARE-Arbo Designer",
+        subject="Protocol-oriented study-virus-estimand design report",
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="DareReportTitle", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=20, leading=23, textColor=navy, alignment=TA_LEFT, spaceAfter=4,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportSubtitle", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=9.3, leading=12.5, textColor=muted, spaceAfter=8,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportHeading", parent=styles["Heading2"], fontName="Helvetica-Bold",
+        fontSize=12.8, leading=15.5, textColor=navy, spaceBefore=10, spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportBody", parent=styles["BodyText"], fontName="Helvetica",
+        fontSize=8.7, leading=12.2, textColor=ink, spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportSmall", parent=styles["BodyText"], fontName="Helvetica",
+        fontSize=7.5, leading=9.8, textColor=ink,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportWhite", parent=styles["BodyText"], fontName="Helvetica-Bold",
+        fontSize=8.2, leading=10.5, textColor=pdf_colors.white, alignment=TA_CENTER,
+    ))
+    styles.add(ParagraphStyle(
+        name="DareReportUnit", parent=styles["Heading3"], fontName="Helvetica-Bold",
+        fontSize=9.5, leading=12, textColor=primary, spaceAfter=4, keepWithNext=True,
+    ))
+
+    def paragraph(value: Any, style: str = "DareReportBody") -> Any:
+        return Paragraph(clean(value), styles[style])
+
+    def heading(value: Any) -> Any:
+        return Paragraph(clean(value), styles["DareReportHeading"])
+
+    def scaled_image(data: bytes | None, max_width: float, max_height: float) -> Any:
+        if not data:
+            return Spacer(max_width, min(max_height, 0.58 * inch))
+        try:
+            image = PdfImage(BytesIO(data))
+            factor = min(max_width / image.imageWidth, max_height / image.imageHeight)
+            image.drawWidth = image.imageWidth * factor
+            image.drawHeight = image.imageHeight * factor
+            return image
+        except Exception:
+            return Spacer(max_width, min(max_height, 0.58 * inch))
+
+    def key_value_table(rows: list[tuple[str, Any]]) -> Any:
+        prepared = [
+            [paragraph(label, "DareReportSmall"), paragraph(value, "DareReportSmall")]
+            for label, value in rows
+        ]
+        table = Table(prepared, colWidths=[1.82 * inch, 5.23 * inch], hAlign="LEFT")
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), pale),
+            ("GRID", (0, 0), (-1, -1), 0.42, border),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 4.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+        ]))
+        return table
+
+    study = report_model["study"]
+    design = report_model["surveillanceDesign"]
+    endpoint_design = report_model["endpointDesign"]
+    coverage = report_model["planningCoverage"]
+    units = list(report_model.get("analysisUnits") or [])
+    commitments = list(report_model.get("reportingCommitments") or [])
+    priorities = list(report_model.get("planningPriorities") or [])
+    narrative = report_model["narrative"]
+
+    title_block = Table(
+        [[
+            scaled_image(branding_logo, 0.72 * inch, 0.72 * inch),
+            Paragraph(clean(report_title), styles["DareReportTitle"]),
+            scaled_image(partner_logo, 0.72 * inch, 0.72 * inch),
+        ]],
+        colWidths=[0.8 * inch, 5.45 * inch, 0.8 * inch],
+    )
+    title_block.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    status_table = Table(
+        [[
+            Paragraph(clean(coverage["overallStatus"]), styles["DareReportWhite"]),
+            Paragraph(
+                clean(
+                    f"Coverage floor: {coverage['coverageFloor']:.0f}% | "
+                    f"Analysis units: {endpoint_design['analysisUnitCount']}"
+                ),
+                styles["DareReportWhite"],
+            ),
+        ]],
+        colWidths=[2.65 * inch, 4.4 * inch],
+    )
+    status_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), primary),
+        ("BOX", (0, 0), (-1, -1), 0.8, primary),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+
+    story: list[Any] = [
+        title_block,
+        Paragraph(
+            "Protocol-oriented summary generated by the DARE-Arbo Designer. "
+            "Planning coverage is not a completed risk-of-bias assessment.",
+            styles["DareReportSubtitle"],
+        ),
+        status_table,
+        heading("1. Surveillance objective and study architecture"),
+        key_value_table([
+            ("Planned study title", study["title"]),
+            ("Study type", study["studyType"]),
+            ("Country or setting", study["countryOrSetting"]),
+            ("Target population", study["targetPopulation"]),
+            ("Target-population class", study["targetPopulationClass"]),
+            ("Source / sampling frame", design["samplingFrame"]),
+            ("Sampling / recruitment method", design["recruitmentMethod"]),
+            ("Virus coverage", study["virusCoverage"]),
+            ("Arbovirus target(s)", "; ".join(study["virusTargets"])),
+            ("Surveillance mode", design["surveillanceMode"]),
+            ("Surveillance architecture", design["surveillanceArchitecture"]),
+            ("Planned recruited sample size", study["plannedSampleSize"]),
+            ("Endpoint design", endpoint_design["endpointDesignType"]),
+            ("Generated", report_model["generatedAt"]),
+        ]),
+    ]
+    if design["surveillanceMode"].startswith("Hybrid"):
+        story.extend([
+            Spacer(1, 6),
+            key_value_table([
+                ("Active surveillance source", design["activeSource"]),
+                ("Passive surveillance source", design["passiveSource"]),
+                ("Stream analysis", design["streamAnalysis"]),
+                ("Integration prespecified", "Yes" if design["integrationPrespecified"] else "No"),
+            ]),
+        ])
+
+    pillar_rows = [[
+        paragraph("Planning pillar", "DareReportWhite"),
+        paragraph("Coverage", "DareReportWhite"),
+        paragraph("Outstanding elements", "DareReportWhite"),
+    ]]
+    pillar_specs = [
+        ("Study design", coverage["studyDesignCoverage"], "Study design"),
+        ("Assay design", coverage["assayDesignCoverage"], "Assay design"),
+        ("Standard reporting", coverage["reportingCoverage"], "Standard reporting"),
+    ]
+    for label, percentage, source_key in pillar_specs:
+        missing = (report_model.get("pillarDetails") or {}).get(source_key, {}).get("missing", [])
+        pillar_rows.append([
+            paragraph(label, "DareReportSmall"),
+            paragraph(f"{percentage:.0f}%", "DareReportSmall"),
+            paragraph("; ".join(missing) if missing else "Complete", "DareReportSmall"),
+        ])
+    pillar_table = Table(pillar_rows, colWidths=[1.65 * inch, 0.85 * inch, 4.55 * inch], repeatRows=1)
+    pillar_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("GRID", (0, 0), (-1, -1), 0.42, border),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [pdf_colors.white, background]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([heading("2. Planning balance"), pillar_table, Spacer(1, 5)])
+    story.append(Paragraph("Planning priorities", styles["DareReportUnit"]))
+    if priorities:
+        for item in priorities:
+            story.append(Paragraph(f"- {clean(item)}", styles["DareReportBody"]))
+    else:
+        story.append(paragraph("No outstanding planning priorities were identified by the current Designer checklist."))
+    story.append(Paragraph(
+        "Planning coverage reflects documentation completeness within the Designer and is not a completed risk-of-bias assessment.",
+        styles["DareReportSubtitle"],
+    ))
+
+    story.extend([PageBreak(), heading("3. Study design flow")])
+    if design_png:
+        story.append(scaled_image(design_png, 7.05 * inch, 6.2 * inch))
+    else:
+        story.append(paragraph("The study-design flow was not supplied for this report export."))
+    story.append(Spacer(1, 5))
+    story.append(Paragraph(
+        "The flow links target population and frame, surveillance streams and virus targets, sampling, endpoint-specific assay pathways, study-virus-estimand units, estimator-ready count definitions and reproducible reporting.",
+        styles["DareReportSubtitle"],
+    ))
+
+    story.extend([PageBreak(), heading("4. Study-virus-estimand analysis plan")])
+    if units:
+        for index, unit in enumerate(units, start=1):
+            assay = unit["assayPathway"]
+            estimand = unit["estimand"]
+            rows: list[tuple[str, Any]] = [
+                ("Estimator readiness", unit["readinessStatus"]),
+                ("Eligible population", unit["population"]["eligiblePopulation"]),
+                ("Testing strategy", assay["testingStrategy"]),
+                ("Primary endpoint-defining assay", assay["primaryEndpointDefiningAssay"]),
+            ]
+            if assay["screeningAssay"] != "Not applicable":
+                rows.append(("Screening assay", assay["screeningAssay"]))
+            if assay["confirmatoryAssays"]:
+                rows.append(("Confirmatory assay(s)", "; ".join(assay["confirmatoryAssays"])))
+            rows.extend([
+                ("Confirmation path", assay["confirmationPath"]),
+                ("Confirmation coverage", assay["confirmationCoverage"]),
+                ("Planned numerator", estimand["observedNumerator"]),
+                ("Estimator denominator", estimand["estimatorDenominator"]),
+                ("Estimator type", estimand["estimatorType"]),
+                ("Summary estimator", estimand["summaryEstimator"]),
+            ])
+            if estimand["adjustmentWeighting"] != "Not applicable / none specified":
+                rows.append(("Adjustment / weighting", estimand["adjustmentWeighting"]))
+            if unit["outstandingFields"]:
+                rows.append(("Outstanding fields", "; ".join(unit["outstandingFields"])))
+            unit_title = (
+                f"Analysis unit {index}: {unit['surveillanceStream']} | "
+                f"{unit['virus']} | {unit['synthesisEndpoint']}"
+            )
+            story.append(KeepTogether([
+                Paragraph(clean(unit_title), styles["DareReportUnit"]),
+                key_value_table(rows),
+                Spacer(1, 8),
+            ]))
+    else:
+        story.append(paragraph("No study-virus-estimand analysis unit could be generated from the current plan."))
+
+    story.append(heading("5. Short written design summary"))
+    for key in (
+        "designSummary",
+        "populationCoverageSummary",
+        "assayArchitectureSummary",
+        "estimatorReadinessSummary",
+        "reproducibilitySummary",
+    ):
+        story.append(paragraph(narrative[key]))
+
+    report_rows = [[
+        paragraph("Standard reporting commitment", "DareReportWhite"),
+        paragraph("Status", "DareReportWhite"),
+    ]] + [
+        [paragraph(item["item"], "DareReportSmall"), paragraph(item["status"], "DareReportSmall")]
+        for item in commitments
+    ]
+    reporting_table = Table(report_rows, colWidths=[5.55 * inch, 1.5 * inch], repeatRows=1)
+    reporting_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("GRID", (0, 0), (-1, -1), 0.42, border),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [pdf_colors.white, background]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([
+        PageBreak(),
+        heading("6. Standard reporting commitments"),
+        reporting_table,
+        heading("7. Protocol handoff note"),
+        paragraph(narrative["protocolHandoffSummary"]),
+    ])
+
+    def header_footer(canvas: Any, doc: Any) -> None:
+        canvas.saveState()
+        page_width, page_height = A4
+        canvas.setFillColor(navy)
+        canvas.rect(0, page_height - 0.27 * inch, page_width, 0.27 * inch, fill=1, stroke=0)
+        canvas.setFillColor(primary)
+        canvas.rect(0, page_height - 0.31 * inch, page_width, 0.04 * inch, fill=1, stroke=0)
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(muted)
+        canvas.drawString(0.55 * inch, 0.31 * inch, report_title)
+        canvas.drawRightString(page_width - 0.55 * inch, 0.31 * inch, f"Page {doc.page}")
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
+    return output.getvalue()
+
+
+def render_surveillance_design_report_pdf(
+    plan: Mapping[str, Any],
+    readiness: Mapping[str, Any] | None = None,
+    design_png: bytes | None = None,
+    presentation_colors: Mapping[str, str] | None = None,
+    branding_logo: bytes | None = None,
+    partner_logo: bytes | None = None,
+) -> bytes:
+    """Build the report model once, then render it without report-layer design rules."""
+    evaluated = dict(readiness or evaluate_study_design_plan(plan))
+    report_model = build_designer_report_model(plan, evaluated)
+    if design_png is None:
+        design_png = render_study_design_png(
+            plan,
+            presentation_colors=presentation_colors,
+            branding_logo=branding_logo,
+        )
+    return render_designer_report_pdf(
+        report_model,
+        design_png=design_png,
+        presentation_colors=presentation_colors,
+        branding_logo=branding_logo,
+        partner_logo=partner_logo,
+    )
 
 
 def classify_synthesis(endpoint_key: str, verification_design: str | None) -> dict[str, str]:

@@ -6,7 +6,7 @@ This directory contains one consolidated Streamlit application that operationali
 
 - **Assessor:** one PDF and one study-virus-estimand at a time, with controlled target and sampling-frame classification, target-frame decision support, endpoint-first assay roles, all 12 DARE-Arbo criteria, audit comments, page-aware evidence suggestions, endpoint-specific applicability, synthesis-tier classification, and PNG/CSV/JSON exports.
 - **Appraiser:** import completed Assessor outputs, upload multiple same-endpoint PDFs for draft evidence scoring, enter studies in a batch grid, retain target/frame and assay-path provenance, calculate endpoint-specific totals and domain scores, inspect a descriptive criterion heatmap, and export synthesis-ready tables.
-- **DARE-Arbo Designer:** plan single or mixed endpoints, active/passive/hybrid surveillance, and single-virus or multiplex studies using the same target-frame, recruitment, assay-pathway, denominator, and reporting rules; download a flow PNG, JSON plan, and surveillance study-design report.
+- **DARE-Arbo Designer:** plan single or mixed endpoints, active/passive/hybrid surveillance, and single-virus or multiplex studies using the same target-frame, recruitment, assay-pathway, denominator, and reporting rules; download a flow PNG, JSON plan, and deterministic protocol-oriented study-design report.
 - **Framework reference:** item ranges, serologic/direct-detection applicability, endpoint definitions, tier rules, and interpretation guardrails.
 - **Reusable engine:** scoring, validation, classification, PDF text extraction, evidence suggestions, and serialization are separated from the Streamlit interface in `dare_arbo.py`.
 
@@ -23,6 +23,21 @@ streamlit run streamlit_app.py
 
 The legacy entry points `risk_bias_assesor.py` and `risk_of_bias_scoring.py` now open the same consolidated application.
 
+## Streamlit Cloud deployment
+
+Deploy `quality_appraisal/streamlit_app.py` and keep `quality_appraisal/dare_arbo.py` in the same repository directory. These two files form a versioned interface/core pair and must be committed and deployed together. After updating either file, reboot the Streamlit Cloud app so its Python process cannot retain an older imported core module. The current compatible core API is `2026.09.11.1`; a mismatched deployment now shows an explicit synchronization message instead of an opaque import failure.
+
+## Designer report architecture
+
+The Designer report keeps planning logic and presentation separate:
+
+1. `evaluate_study_design_plan()` applies the existing Designer rules and constructs stream-virus-endpoint units.
+2. `build_designer_report_model()` normalizes the completed session into a deterministic, JSON-serializable report model, assigns assay roles from each estimand, validates estimator readiness, and creates specific planning priorities.
+3. `generate_designer_narrative()` produces controlled protocol-oriented prose without an LLM or external report service.
+4. `render_designer_report_pdf()` renders the model with the existing ReportLab stack; `render_surveillance_design_report_pdf()` remains the compatibility entry point used by the Streamlit page.
+
+Planning coverage in this report is a documentation-completeness indicator. It is not a risk-of-bias, methodological-validity, or study-quality score.
+
 ## Test the rule engine
 
 ```powershell
@@ -32,6 +47,8 @@ python -m unittest discover -s tests -v
 ## PDF behavior and privacy
 
 Uploaded PDFs are processed in memory and are not persisted by the app. Text-based PDFs work directly. Image-only/scanned articles require OCR before upload. Evidence suggestions use explicit, local rules and page-aware text matches; they are drafts that reviewers must verify against the article, tables, supplements, and stated target population.
+
+For a public deployment, add authentication and a persistence layer only if project storage is needed, deploy behind HTTPS, and establish a retention policy suitable for the uploaded literature.
 
 ## Primary framework sources in this directory
 

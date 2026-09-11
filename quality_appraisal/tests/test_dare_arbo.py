@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 from pathlib import Path
 import unittest
 
@@ -18,6 +19,7 @@ from dare_arbo import (
     audit_synthesis_path_counts,
     assess_target_frame_alignment,
     assay_path_profile,
+    build_designer_report_model,
     build_export_record,
     classify_synthesis,
     criterion_is_applicable,
@@ -938,6 +940,191 @@ class DareArboScoringTests(unittest.TestCase):
             justified["pillars"]["Study design"]["missing"],
         )
 
+    def _complete_designer_plan(self, **updates: object) -> dict[str, object]:
+        plan: dict[str, object] = {
+            "study_title": "Complete DENV surveillance design",
+            "country_or_setting": "Ghana sentinel network",
+            "synthesis_path_key": "serology_apparent",
+            "synthesis_path_keys": ["serology_apparent"],
+            "virus": "DENV",
+            "viruses": ["DENV"],
+            "virus_coverage": "Single virus",
+            "target_population": "General febrile population attending participating sentinel facilities",
+            "target_population_category": "General febrile population",
+            "sampling_frame_category": "Sentinel Site / Network",
+            "sampling_recruitment_method": "Multistage probability sampling",
+            "surveillance_mode": "Passive surveillance",
+            "surveillance_architecture": "Sentinel facility surveillance",
+            "stream_estimator_mode": "Passive surveillance",
+            "stream_integration_plan": True,
+            "endpoint_design": "Single endpoint",
+            "planned_sample_size": 800,
+            "eligibility_defined": True,
+            "sample_size_rationale": True,
+            "nonresponse_plan": True,
+            "pathway_assays": {
+                "serology_apparent": {
+                    "primary_assay": "IgG ELISA",
+                    "confirmatory_assay": "",
+                }
+            },
+            "specimen_timing": True,
+            "validation_controls": True,
+            "cross_reactivity_plan": True,
+            "testing_denominator_plan": True,
+            "endpoint_specific_assay_plan": True,
+            "multiplex_assay_plan": True,
+            "numerator_denominator_reporting": True,
+            "flow_reporting": True,
+            "assay_reporting": True,
+            "missingness_reporting": True,
+            "estimator_reporting": True,
+            "reproducibility_reporting": True,
+            "mixed_endpoint_reporting_plan": True,
+            "multiplex_reporting_plan": True,
+            "created_at": "2026-09-11T09:00:00+00:00",
+        }
+        plan.update(updates)
+        return plan
+
+    def test_designer_report_case_1_passive_sentinel_primary_igg(self) -> None:
+        model = build_designer_report_model(self._complete_designer_plan())
+        self.assertEqual(model["endpointDesign"]["analysisUnitCount"], 1)
+        unit = model["analysisUnits"][0]
+        self.assertEqual(unit["surveillanceStream"], "Passive surveillance")
+        self.assertEqual(unit["synthesisEndpoint"], "Prior exposure / antibody seroprevalence")
+        self.assertEqual(unit["assayPathway"]["primaryEndpointDefiningAssay"], "IgG ELISA")
+        self.assertEqual(unit["estimand"]["observedNumerator"], "IgG-positive participants")
+        self.assertEqual(unit["estimand"]["estimatorDenominator"], "Participants tested by IgG ELISA")
+        self.assertEqual(unit["estimand"]["summaryEstimator"], "Apparent prevalence")
+
+    def test_designer_report_case_2_complete_ns1_pcr_algorithm(self) -> None:
+        plan = self._complete_designer_plan(
+            synthesis_path_key="confirmed_active_tier_b",
+            synthesis_path_keys=["confirmed_active_tier_b"],
+            pathway_assays={
+                "confirmed_active_tier_b": {
+                    "primary_assay": "NS1 antigen RDT",
+                    "confirmatory_assay": "Real-time RT-qPCR",
+                }
+            },
+        )
+        unit = build_designer_report_model(plan)["analysisUnits"][0]
+        self.assertEqual(unit["assayPathway"]["screeningAssay"], "NS1 antigen RDT")
+        self.assertEqual(unit["assayPathway"]["primaryEndpointDefiningAssay"], "Real-time RT-qPCR")
+        self.assertEqual(unit["estimand"]["observedNumerator"], "Molecularly confirmed positives")
+        self.assertIn("complete screening-confirmation algorithm", unit["estimand"]["estimatorDenominator"])
+        self.assertEqual(unit["readinessStatus"], "Estimator ready")
+
+    def test_designer_report_case_3_selective_prnt_retains_igg_endpoint(self) -> None:
+        plan = self._complete_designer_plan(
+            synthesis_path_key="serology_tier_d",
+            synthesis_path_keys=["serology_tier_d"],
+            pathway_assays={
+                "serology_tier_d": {
+                    "primary_assay": "IgG ELISA",
+                    "confirmatory_assay": "PRNT90",
+                }
+            },
+        )
+        unit = build_designer_report_model(plan)["analysisUnits"][0]
+        self.assertEqual(unit["assayPathway"]["primaryEndpointDefiningAssay"], "IgG ELISA")
+        self.assertEqual(unit["estimand"]["observedNumerator"], "Primary positive")
+        self.assertEqual(unit["estimand"]["estimatorDenominator"], "Total tested")
+        self.assertIn("does not overwrite", unit["assayPathway"]["confirmationPath"])
+
+    def test_designer_report_case_4_separate_neutralization_unit(self) -> None:
+        plan = self._complete_designer_plan(
+            endpoint_design="Mixed endpoints",
+            synthesis_path_keys=["serology_apparent", "neutralization_universal"],
+            pathway_assays={
+                "serology_apparent": {"primary_assay": "IgG ELISA", "confirmatory_assay": ""},
+                "neutralization_universal": {"primary_assay": "PRNT90", "confirmatory_assay": ""},
+            },
+        )
+        units = build_designer_report_model(plan)["analysisUnits"]
+        self.assertEqual(len(units), 2)
+        neutralization = next(unit for unit in units if "Neutralizing" in unit["synthesisEndpoint"])
+        self.assertEqual(neutralization["estimand"]["observedNumerator"], "Neutralization-positive participants")
+        self.assertEqual(neutralization["estimand"]["estimatorDenominator"], "Participants tested by PRNT90")
+
+    def test_designer_report_case_5_hybrid_streams_remain_separate(self) -> None:
+        plan = self._complete_designer_plan(
+            surveillance_mode="Hybrid active + passive surveillance",
+            active_stream_definition="Scheduled community fever screening",
+            passive_stream_definition="Routine febrile presentations at sentinel facilities",
+            stream_estimator_mode="Combined estimator with source/stream adjustment",
+            stream_integration_plan=False,
+        )
+        model = build_designer_report_model(plan)
+        self.assertEqual(
+            {unit["surveillanceStream"] for unit in model["analysisUnits"]},
+            {"Active surveillance", "Passive surveillance"},
+        )
+        self.assertTrue(any("active and passive" in item.lower() for item in model["planningPriorities"]))
+
+    def test_designer_report_case_6_multiplex_mixed_full_cross_product(self) -> None:
+        plan = self._complete_designer_plan(
+            endpoint_design="Mixed endpoints",
+            synthesis_path_keys=["serology_apparent", "confirmed_active_universal"],
+            virus="DENV; CHIKV",
+            viruses=["DENV", "CHIKV"],
+            virus_coverage="Multiplex / multiple viruses",
+            pathway_assays={
+                "serology_apparent": {"primary_assay": "IgG ELISA", "confirmatory_assay": ""},
+                "confirmed_active_universal": {"primary_assay": "Multiplex RT-PCR/NAAT", "confirmatory_assay": ""},
+            },
+        )
+        model = build_designer_report_model(plan)
+        self.assertEqual(model["endpointDesign"]["analysisUnitCount"], 4)
+        combinations = {
+            (unit["virus"], unit["synthesisEndpoint"], unit["estimand"]["estimatorDenominator"])
+            for unit in model["analysisUnits"]
+        }
+        self.assertEqual(len(combinations), 4)
+
+    def test_designer_report_case_7_missing_denominator_is_incomplete(self) -> None:
+        plan = self._complete_designer_plan(
+            pathway_estimands={
+                "serology_apparent": {
+                    "numerator": "IgG-positive participants",
+                    "denominator": "",
+                    "summary_estimator": "Apparent prevalence",
+                }
+            }
+        )
+        model = build_designer_report_model(plan)
+        unit = model["analysisUnits"][0]
+        self.assertEqual(unit["readinessStatus"], "Estimator definition incomplete")
+        self.assertIn("estimator denominator definition", unit["outstandingFields"])
+        self.assertTrue(any("denominator" in item.lower() for item in model["planningPriorities"]))
+
+    def test_designer_report_case_8_complete_design_has_no_priorities(self) -> None:
+        model = build_designer_report_model(self._complete_designer_plan())
+        self.assertEqual(model["planningCoverage"]["coverageFloor"], 100)
+        self.assertEqual(model["planningCoverage"]["overallStatus"], "Planning framework complete")
+        self.assertEqual(model["planningPriorities"], [])
+        self.assertTrue(all(unit["readinessStatus"] == "Estimator ready" for unit in model["analysisUnits"]))
+
+    def test_designer_report_case_9_deterministic_and_not_risk_score(self) -> None:
+        plan = self._complete_designer_plan()
+        first = build_designer_report_model(plan)
+        second = build_designer_report_model(plan)
+        self.assertEqual(first, second)
+        json.dumps(first)
+        narrative = " ".join(first["narrative"].values())
+        self.assertIn("Planning coverage reflects documentation completeness", narrative)
+        self.assertIn("not a risk-of-bias score", narrative)
+        substantive_word_count = len(" ".join(
+            first["narrative"][key]
+            for key in (
+                "designSummary", "populationCoverageSummary", "assayArchitectureSummary",
+                "estimatorReadinessSummary", "reproducibilitySummary",
+            )
+        ).split())
+        self.assertGreaterEqual(substantive_word_count, 300)
+        self.assertLessEqual(substantive_word_count, 600)
+
     def test_study_designer_png_is_high_resolution_and_downloadable(self) -> None:
         png = render_study_design_png(
             {
@@ -1025,7 +1212,22 @@ class DareArboScoringTests(unittest.TestCase):
         self.assertIn("Design Report", extracted)
         self.assertIn("District arbovirus surveillance protocol", extracted)
         self.assertIn("Study-virus-estimand analysis plan", extracted)
+        self.assertIn("Short written design summary", extracted)
+        self.assertIn("Primary endpoint-defining assay", extracted)
+        self.assertIn("Planning coverage is not a completed risk-of-bias", extracted)
+        self.assertIn("assessment.", extracted)
         self.assertIn("Protocol handoff note", extracted)
+
+    def test_general_designer_report_uses_non_surveillance_title(self) -> None:
+        plan = self._complete_designer_plan(report_scope="study")
+        report = render_surveillance_design_report_pdf(plan, design_png=render_study_design_png(plan))
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(report))
+        self.assertEqual(reader.metadata.title, "DARE-Arbo Study Design Report")
+        extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
+        self.assertIn("DARE-Arbo Study Design", extracted)
+        self.assertNotIn("DARE-Arbo Surveillance Study Design\nReport", extracted)
 
     def test_study_designer_expands_hybrid_mixed_multiplex_analysis_units(self) -> None:
         plan = {
@@ -1126,7 +1328,7 @@ class StreamlitSmokeTests(unittest.TestCase):
         self.assertIn("1. Define the surveillance objective", subheaders)
         self.assertIn("3. Planning balance and design figure", subheaders)
         download_labels = [button.label for button in self.app.download_button]
-        self.assertIn("Download surveillance study design report (PDF)", download_labels)
+        self.assertIn("Download study design report", download_labels)
         self.assertIn("Download study-design flow PNG", download_labels)
         self.assertIn("Download study-design plan JSON", download_labels)
 

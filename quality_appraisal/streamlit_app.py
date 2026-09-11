@@ -20,7 +20,7 @@ import pandas as pd
 from PIL import Image
 import streamlit as st
 
-EXPECTED_CORE_API_VERSION = "2026.09.10.1"
+EXPECTED_CORE_API_VERSION = "2026.09.11.1"
 try:
     from dare_arbo import CORE_API_VERSION
 except ImportError:
@@ -59,6 +59,7 @@ from dare_arbo import (
     audit_synthesis_path_counts,
     assess_target_frame_alignment,
     assay_path_profile,
+    build_designer_report_model,
     build_export_record,
     classify_synthesis,
     criterion_is_applicable,
@@ -2337,6 +2338,17 @@ def study_designer_page() -> None:
             key="designer_study_title",
             placeholder="e.g., Community DENV seroprevalence survey",
         )
+        country_or_setting = st.text_input(
+            "Country or study setting",
+            key="designer_country_or_setting",
+            placeholder="e.g., Ghana; Greater Accra sentinel network",
+        )
+        design_context = st.selectbox(
+            "Design context",
+            ("Surveillance study", "Other study design"),
+            key="designer_design_context",
+            help="This controls whether the downloaded report uses the surveillance-specific or general DARE-Arbo study-design title.",
+        )
         virus_coverage = st.selectbox(
             "Virus coverage",
             ("Single virus", "Multiplex / multiple viruses"),
@@ -2725,6 +2737,8 @@ def study_designer_page() -> None:
 
     plan = {
         "study_title": study_title,
+        "country_or_setting": country_or_setting,
+        "report_scope": "surveillance" if design_context == "Surveillance study" else "study",
         "virus": virus,
         "viruses": viruses,
         "virus_coverage": virus_coverage,
@@ -2851,28 +2865,44 @@ def study_designer_page() -> None:
         presentation_colors=presentation_colors,
         branding_logo=branding_logo,
     )
-    report_pdf = render_surveillance_design_report_pdf(
-        plan,
-        readiness=readiness,
-        design_png=design_png,
-        presentation_colors=presentation_colors,
-        branding_logo=branding_logo,
-        partner_logo=(
-            prepared_square_logo(SYNERGY_LOGO_PATH.read_bytes())
-            if SYNERGY_LOGO_PATH.exists()
-            else None
-        ),
-    )
+    report_model = build_designer_report_model(plan, readiness)
+    report_pdf: bytes | None = None
+    try:
+        with st.spinner("Preparing report…"):
+            report_pdf = render_surveillance_design_report_pdf(
+                plan,
+                readiness=readiness,
+                design_png=design_png,
+                presentation_colors=presentation_colors,
+                branding_logo=branding_logo,
+                partner_logo=(
+                    prepared_square_logo(SYNERGY_LOGO_PATH.read_bytes())
+                    if SYNERGY_LOGO_PATH.exists()
+                    else None
+                ),
+            )
+    except Exception:
+        st.error("Report could not be generated. Your study design has not been changed.")
     st.image(design_png, caption="DARE-Arbo surveillance study-design flow", width="stretch")
-    raw_name = "_".join(filter(None, [study_title or "study-design", virus])).strip()
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_name).strip("_") or "DARE-Arbo_study_design"
+    with st.expander("Written protocol-oriented design summary", expanded=False):
+        for paragraph_text in report_model["narrative"].values():
+            st.write(paragraph_text)
+    raw_name = study_title or "Study"
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_name).strip("_") or "Study"
+    report_prefix = (
+        "DARE-Arbo_Surveillance_Study_Design"
+        if "Surveillance" in report_model["reportTitle"]
+        else "DARE-Arbo_Study_Design"
+    )
+    report_filename = f"{report_prefix}_{safe_name}_{date.today().isoformat()}.pdf"
     download_cols = st.columns(3)
     download_cols[0].download_button(
-        "Download surveillance study design report (PDF)",
-        data=report_pdf,
-        file_name=f"{safe_name}_surveillance_study_design_report.pdf",
+        "Download study design report",
+        data=report_pdf or b"",
+        file_name=report_filename,
         mime="application/pdf",
         width="stretch",
+        disabled=report_pdf is None,
     )
     download_cols[1].download_button(
         "Download study-design flow PNG",
@@ -2883,7 +2913,11 @@ def study_designer_page() -> None:
     )
     download_cols[2].download_button(
         "Download study-design plan JSON",
-        data=json.dumps({**plan, "planning_readiness": readiness}, ensure_ascii=False, indent=2).encode("utf-8"),
+        data=json.dumps(
+            {**plan, "planning_readiness": readiness, "designer_report_model": report_model},
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8"),
         file_name=f"{safe_name}_plan.json",
         mime="application/json",
         width="stretch",
