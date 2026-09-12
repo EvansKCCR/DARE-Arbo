@@ -821,6 +821,31 @@ def render_assessment_png(
             draw.text((x, y), line, font=font, fill=fill)
             y += line_height
 
+    def centered_fitted_text(
+        box: tuple[int, int, int, int],
+        text: str,
+        fill: str,
+        *,
+        maximum_size: int,
+        minimum_size: int,
+        bold: bool = False,
+        padding: int = 12,
+    ) -> None:
+        """Center wrapped text and reduce its size until it stays inside ``box``."""
+        x1, y1, x2, y2 = box
+        available_width = max(20, x2 - x1 - 2 * padding)
+        available_height = max(20, y2 - y1 - 2 * padding)
+        selected_font = load_font(minimum_size, bold=bold)
+        for size in range(maximum_size, minimum_size - 1, -1):
+            candidate_font = load_font(size, bold=bold)
+            lines = wrapped_lines(text, candidate_font, available_width)
+            glyph_box = draw.textbbox((0, 0), "Ag", font=candidate_font)
+            line_height = max(16, glyph_box[3] - glyph_box[1] + 5)
+            if line_height * len(lines) <= available_height:
+                selected_font = candidate_font
+                break
+        centered_text(box, text, selected_font, fill, padding=padding)
+
     def rounded_box(
         box: tuple[int, int, int, int],
         text: str,
@@ -1087,24 +1112,42 @@ def render_assessment_png(
     draw.text((486, 1670), status, font=body_font, fill=colors["teal"] if result["complete"] else colors["gold"])
     centered_text((470, 1714, 770, 1790), "Continuous score\nNo official risk band", small_font, colors["muted"])
     draw.line((790, 1624, 790, 1798), fill=colors["border"], width=2)
-    centered_text((818, 1622, 1204, 1692), str(classification.get("tier") or "Not tiered"), section_font, colors["navy"])
-    centered_text((818, 1692, 1204, 1796), str(classification.get("analysis_role") or "Retain as a distinct endpoint"), small_font, colors["muted"])
+    centered_fitted_text(
+        (800, 1620, 1216, 1718),
+        str(classification.get("tier") or "Not tiered"),
+        colors["navy"],
+        maximum_size=34,
+        minimum_size=22,
+        bold=True,
+        padding=12,
+    )
+    centered_fitted_text(
+        (800, 1718, 1216, 1800),
+        str(classification.get("analysis_role") or "Retain as a distinct endpoint"),
+        colors["muted"],
+        maximum_size=25,
+        minimum_size=18,
+        padding=10,
+    )
     draw.rounded_rectangle((1224, 1632, 1542, 1788), radius=17, fill=colors["mint"], outline="#FCA5A5", width=2)
     centered_text((1240, 1646, 1526, 1712), pathway.replace("_", " ").title(), box_font, colors["teal_dark"])
     centered_text((1240, 1712, 1526, 1770), f"Applicable maximum: {result['maximum']}", small_font, colors["muted"])
 
-    draw.text((72, 1853), "ITEM ATTAINMENT", font=small_font, fill=colors["navy"])
+    legend_heading = "ITEM ATTAINMENT"
+    draw.text((72, 1853), legend_heading, font=small_font, fill=colors["navy"])
     legend_items = [
         (colors["green_pale"], "Maximum points"),
         (colors["gold_pale"], "Partial points"),
         (colors["red_pale"], "Zero points"),
         (colors["grey"], "Unscored / N/A"),
     ]
-    legend_x = 300
+    legend_title_right = draw.textbbox((72, 1853), legend_heading, font=small_font)[2]
+    legend_x = max(380, legend_title_right + 52)
+    legend_step = (width - legend_x - 72) // len(legend_items)
     for fill, label in legend_items:
         draw.rounded_rectangle((legend_x, 1848, legend_x + 28, 1876), radius=8, fill=fill)
         draw.text((legend_x + 38, 1849), label, font=small_font, fill=colors["muted"])
-        legend_x += 340
+        legend_x += legend_step
     draw.text((72, 1903), "Descriptive colors show point attainment only | not official risk-of-bias categories", font=small_font, fill=colors["muted"])
 
     output = BytesIO()
