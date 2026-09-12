@@ -644,6 +644,10 @@ def initialize_state() -> None:
         "registry": [],
         "batch_grid": pd.DataFrame([empty_batch_row()]),
         "batch_editor_version": 0,
+        "batch_row_edit_index": None,
+        "batch_row_edit_version": 0,
+        "batch_rows_pending_delete": [],
+        "batch_row_notice": "",
         "registry_batch_loaded_count": 0,
         "batch_pdf_hashes": [],
         "batch_pdf_evidence": [],
@@ -2087,7 +2091,14 @@ def generate_batch_from_registry() -> None:
 
 def batch_editor() -> pd.DataFrame:
     st.subheader("Rapid structured batch entry")
-    st.caption("Use one row per study-virus-estimand. Select the synthesis path, complete only its relevant count columns, and leave other count columns blank.")
+    row_notice = st.session_state.pop("batch_row_notice", "")
+    if row_notice:
+        st.success(row_notice)
+    st.caption(
+        "Use one row per study-virus-estimand. Edit cells directly in the grid, or select "
+        "one or more rows below the grid to open a focused editor or delete them. Complete "
+        "only the count columns required by the selected synthesis path."
+    )
     column_config: dict[str, Any] = {
         "Study ID": st.column_config.TextColumn(required=True),
         "Citation or DOI": st.column_config.TextColumn(),
@@ -2167,24 +2178,151 @@ def batch_editor() -> pd.DataFrame:
             max_value=criterion.maximum,
             step=1,
         )
+    editor_column_order = [
+        "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
+        "Achieved sample representation", "Sampling frame / source population", "Sampling-frame category", "Sampling/recruitment method",
+        "Primary assay", "Confirmatory assay", "Assay validation / QC",
+        "Endpoint procedure consistency", "Assay-performance correction", "Synthesis path",
+        *[label for label, _ in PATH_COUNT_FIELDS.values()],
+        "Numerator provenance", *[criterion.code for criterion in CRITERIA],
+    ]
+    row_edit_index = st.session_state.get("batch_row_edit_index")
+    pending_delete = list(st.session_state.get("batch_rows_pending_delete", []))
+    row_action_active = row_edit_index is not None or bool(pending_delete)
     edited = st.data_editor(
         st.session_state["batch_grid"],
         column_config=column_config,
-        column_order=[
-            "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
-            "Achieved sample representation", "Sampling frame / source population", "Sampling-frame category", "Sampling/recruitment method",
-            "Primary assay", "Confirmatory assay", "Assay validation / QC",
-            "Endpoint procedure consistency", "Assay-performance correction", "Synthesis path",
-            *[label for label, _ in PATH_COUNT_FIELDS.values()],
-            "Numerator provenance", *[criterion.code for criterion in CRITERIA],
-        ],
+        column_order=editor_column_order,
         num_rows="dynamic",
+        disabled=row_action_active,
         use_container_width=True,
         hide_index=True,
         key=f"batch_editor_widget_{st.session_state['batch_editor_version']}",
     )
-    st.session_state["batch_grid"] = edited
-    return edited
+    st.session_state["batch_grid"] = edited.reset_index(drop=True)
+
+    batch_snapshot = st.session_state["batch_grid"]
+
+    def describe_row(position: int) -> str:
+        row = batch_snapshot.iloc[position]
+        study_value = row.get("Study ID")
+        virus_value = row.get("Virus")
+        study_id = (
+            "" if study_value is None or pd.isna(study_value) else str(study_value).strip()
+        ) or "Untitled study"
+        virus = "" if virus_value is None or pd.isna(virus_value) else str(virus_value).strip()
+        suffix = f" · {virus}" if virus else ""
+        return f"Row {position + 1} — {study_id}{suffix}"
+
+    row_positions = list(range(len(batch_snapshot)))
+    row_labels = {position: describe_row(position) for position in row_positions}
+    selected_rows = st.multiselect(
+        "Select row(s) to manage",
+        row_positions,
+        format_func=lambda position: row_labels.get(position, f"Row {position + 1}"),
+        disabled=row_action_active,
+        key=f"batch_row_selection_{st.session_state['batch_editor_version']}",
+        help="Select exactly one row to open it in the focused editor, or select one or more rows for deletion.",
+    )
+    action_cols = st.columns([1, 1, 2])
+    if action_cols[0].button(
+        "Edit selected row",
+        disabled=row_action_active or len(selected_rows) != 1,
+        use_container_width=True,
+    ):
+        st.session_state["batch_row_edit_index"] = selected_rows[0]
+        st.session_state["batch_row_edit_version"] += 1
+        st.session_state["batch_editor_version"] += 1
+        st.rerun()
+    if action_cols[1].button(
+        "Delete selected row(s)",
+        disabled=row_action_active or not selected_rows,
+        use_container_width=True,
+    ):
+        st.session_state["batch_rows_pending_delete"] = selected_rows
+        st.session_state["batch_editor_version"] += 1
+        st.rerun()
+    action_cols[2].caption(
+        "Grid changes are retained in this session and immediately update the batch outputs."
+    )
+
+    if pending_delete:
+        valid_positions = sorted(
+            {position for position in pending_delete if 0 <= position < len(st.session_state["batch_grid"])}
+        )
+        labels = [row_labels[position] for position in valid_positions]
+        st.warning(
+            f"Delete {len(valid_positions)} selected row(s)? "
+            + "; ".join(labels)
+            + ". This changes the batch grid but does not delete the original Assessor registry records."
+        )
+        confirm_cols = st.columns([1, 1, 2])
+        if confirm_cols[0].button(
+            "Confirm deletion",
+            type="primary",
+            use_container_width=True,
+        ):
+            remaining = st.session_state["batch_grid"].drop(index=valid_positions).reset_index(drop=True)
+            st.session_state["batch_grid"] = (
+                remaining if not remaining.empty else pd.DataFrame([empty_batch_row()])
+            )
+            st.session_state["batch_rows_pending_delete"] = []
+            st.session_state["batch_row_notice"] = (
+                f"Deleted {len(valid_positions)} selected batch row(s)."
+            )
+            st.session_state["registry_batch_loaded_count"] = 0
+            st.session_state["batch_editor_version"] += 1
+            st.rerun()
+        if confirm_cols[1].button("Cancel deletion", use_container_width=True):
+            st.session_state["batch_rows_pending_delete"] = []
+            st.session_state["batch_editor_version"] += 1
+            st.rerun()
+
+    row_edit_index = st.session_state.get("batch_row_edit_index")
+    if row_edit_index is not None:
+        if not 0 <= row_edit_index < len(st.session_state["batch_grid"]):
+            st.session_state["batch_row_edit_index"] = None
+            st.warning("The selected row is no longer available. Select another row to edit.")
+        else:
+            selected_label = row_labels[row_edit_index]
+            with st.expander(f"Focused row editor · {selected_label}", expanded=True):
+                st.caption(
+                    "Modify the selected record below, then save it back to the batch grid. "
+                    "Cancel leaves the existing row unchanged."
+                )
+                focused_row = st.data_editor(
+                    st.session_state["batch_grid"].iloc[[row_edit_index]].reset_index(drop=True),
+                    column_config=column_config,
+                    column_order=editor_column_order,
+                    num_rows="fixed",
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"batch_focused_editor_{st.session_state['batch_row_edit_version']}",
+                )
+                edit_cols = st.columns([1, 1, 2])
+                if edit_cols[0].button(
+                    "Save row changes",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    updated_grid = st.session_state["batch_grid"].copy()
+                    for column in updated_grid.columns:
+                        if column in focused_row.columns:
+                            updated_grid.at[row_edit_index, column] = focused_row.iloc[0][column]
+                    st.session_state["batch_grid"] = updated_grid
+                    st.session_state["batch_row_edit_index"] = None
+                    st.session_state["batch_row_notice"] = (
+                        f"Saved changes to {selected_label}."
+                    )
+                    st.session_state["registry_batch_loaded_count"] = 0
+                    st.session_state["batch_editor_version"] += 1
+                    st.rerun()
+                if edit_cols[1].button("Cancel row editing", use_container_width=True):
+                    st.session_state["batch_row_edit_index"] = None
+                    st.session_state["batch_editor_version"] += 1
+                    st.rerun()
+
+    return st.session_state["batch_grid"]
 
 
 def batch_pdf_intake() -> None:
