@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import unittest
 
+import pandas as pd
+
 from dare_arbo import (
     ASSAY_OPTIONS_BY_SYNTHESIS_PATH,
     CRITERIA,
@@ -1308,6 +1310,10 @@ class StreamlitSmokeTests(unittest.TestCase):
         self.app.sidebar.radio[0].set_value("Appraiser").run()
         self.assert_no_app_exception()
         self.assertIn("Rapid structured batch entry", [element.value for element in self.app.subheader])
+        self.assertIn("Select row(s) to manage", [element.label for element in self.app.multiselect])
+        appraiser_buttons = [button.label for button in self.app.button]
+        self.assertIn("Edit selected row", appraiser_buttons)
+        self.assertIn("Delete selected row(s)", appraiser_buttons)
         self.app.sidebar.radio[0].set_value("Framework").run()
         self.assert_no_app_exception()
         self.assertIn("Scoring structure", [element.value for element in self.app.subheader])
@@ -1491,6 +1497,70 @@ class StreamlitSmokeTests(unittest.TestCase):
         self.assertEqual(len(batch), 1)
         self.assertEqual(batch.iloc[0]["Study ID"], "Registry Study 2026")
         self.assertEqual(batch.iloc[0]["Q1"], 1)
+
+    def test_batch_row_management_deletes_only_selected_rows(self) -> None:
+        template = self.app.session_state["batch_grid"].copy()
+        first = template.copy()
+        first.at[0, "Study ID"] = "Keep study"
+        second = template.copy()
+        second.at[0, "Study ID"] = "Delete study"
+        self.app.session_state["batch_grid"] = pd.concat(
+            [first, second], ignore_index=True
+        )
+        self.app.sidebar.radio[0].set_value("Appraiser").run()
+        self.assert_no_app_exception()
+
+        selector = next(
+            element for element in self.app.multiselect
+            if element.label == "Select row(s) to manage"
+        )
+        selector.set_value([1]).run()
+        delete_button = next(
+            button for button in self.app.button
+            if button.label == "Delete selected row(s)"
+        )
+        self.assertFalse(delete_button.disabled)
+        delete_button.click().run()
+        self.assert_no_app_exception()
+
+        confirm_button = next(
+            button for button in self.app.button
+            if button.label == "Confirm deletion"
+        )
+        confirm_button.click().run()
+        self.assert_no_app_exception()
+        batch = self.app.session_state["batch_grid"]
+        self.assertEqual(len(batch), 1)
+        self.assertEqual(batch.iloc[0]["Study ID"], "Keep study")
+
+        selector = next(
+            element for element in self.app.multiselect
+            if element.label == "Select row(s) to manage"
+        )
+        selector.set_value([0]).run()
+        edit_button = next(
+            button for button in self.app.button
+            if button.label == "Edit selected row"
+        )
+        self.assertFalse(edit_button.disabled)
+        edit_button.click().run()
+        self.assert_no_app_exception()
+        self.assertTrue(
+            any(
+                expander.label.startswith("Focused row editor · Row 1 — Keep study")
+                for expander in self.app.expander
+            )
+        )
+        save_button = next(
+            button for button in self.app.button
+            if button.label == "Save row changes"
+        )
+        save_button.click().run()
+        self.assert_no_app_exception()
+        self.assertEqual(
+            self.app.session_state["batch_grid"].iloc[0]["Study ID"],
+            "Keep study",
+        )
 
 
 if __name__ == "__main__":
