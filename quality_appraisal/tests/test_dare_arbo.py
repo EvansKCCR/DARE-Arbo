@@ -754,7 +754,14 @@ class DareArboScoringTests(unittest.TestCase):
     def test_export_keeps_scores_comments_and_classification(self) -> None:
         scores = maximum_scores("serologic")
         record = build_export_record(
-            {"study_id": "Example 2026"},
+            {
+                "study_id": "Example 2026",
+                "assessor_id": "RV-017",
+                "assessment_started_at_utc": "2026-09-13T08:00:00+00:00",
+                "assessment_completed_at_utc": "2026-09-13T08:42:30+00:00",
+                "assessment_elapsed_seconds": 2550,
+                "assessment_elapsed_minutes": 42.5,
+            },
             scores,
             {"Q1": "Age and sex matched the stated community target."},
             "serologic",
@@ -764,6 +771,11 @@ class DareArboScoringTests(unittest.TestCase):
         self.assertIn("Q1 Q3 Q4 Rules", record["appraisal_library_rule_source"])
         self.assertEqual(record["Q1_comment"], "Age and sex matched the stated community target.")
         self.assertEqual(record["synthesis_tier"], "Unresolved")
+        self.assertEqual(record["assessor_id"], "RV-017")
+        self.assertEqual(
+            record["assessment_started_at_utc"], "2026-09-13T08:00:00+00:00"
+        )
+        self.assertEqual(record["assessment_elapsed_minutes"], 42.5)
 
     def test_blank_pdf_is_flagged_as_empty(self) -> None:
         try:
@@ -1305,6 +1317,13 @@ class StreamlitSmokeTests(unittest.TestCase):
         labels = [element.value for element in self.app.subheader]
         self.assertIn("1. Define the extracted endpoint", labels)
         self.assertIn("4. Review and export", labels)
+        self.assertIn("Assessor ID", [element.label for element in self.app.text_input])
+        self.assertTrue(self.app.session_state["assessment_started_at_utc"])
+        self.assertEqual(self.app.session_state["assessment_completed_at_utc"], "")
+        save_button = next(
+            button for button in self.app.button if button.label == "Save to Appraiser"
+        )
+        self.assertTrue(save_button.disabled)
 
     def test_appraiser_and_framework_views(self) -> None:
         self.app.sidebar.radio[0].set_value("Appraiser").run()
@@ -1472,10 +1491,34 @@ class StreamlitSmokeTests(unittest.TestCase):
         self.assert_no_app_exception()
         self.assertIsNone(self.app.session_state["score_Q1"])
 
+    def test_assessor_audit_trail_captures_completion_and_elapsed_time(self) -> None:
+        assessor_field = next(
+            field for field in self.app.text_input if field.label == "Assessor ID"
+        )
+        assessor_field.set_value("RV-017").run()
+        for code, value in maximum_scores("serologic", "prior_exposure").items():
+            self.app.session_state[f"score_{code}"] = value
+        self.app.run()
+        self.assert_no_app_exception()
+        self.assertTrue(self.app.session_state["assessment_started_at_utc"])
+        self.assertTrue(self.app.session_state["assessment_completed_at_utc"])
+        self.assertGreaterEqual(
+            self.app.session_state["assessment_elapsed_seconds"], 0
+        )
+        save_button = next(
+            button for button in self.app.button if button.label == "Save to Appraiser"
+        )
+        self.assertFalse(save_button.disabled)
+
     def test_registry_generates_batch_appraisal_grid(self) -> None:
         registry_record = build_export_record(
             {
                 "study_id": "Registry Study 2026",
+                "assessor_id": "RV-017",
+                "assessment_started_at_utc": "2026-09-13T08:00:00+00:00",
+                "assessment_completed_at_utc": "2026-09-13T08:30:00+00:00",
+                "assessment_elapsed_seconds": 1800,
+                "assessment_elapsed_minutes": 30.0,
                 "virus": "DENV",
                 "endpoint_key": "prior_exposure",
                 "endpoint_label": "Prior exposure / antibody seroprevalence",
@@ -1496,6 +1539,12 @@ class StreamlitSmokeTests(unittest.TestCase):
         batch = self.app.session_state["batch_grid"]
         self.assertEqual(len(batch), 1)
         self.assertEqual(batch.iloc[0]["Study ID"], "Registry Study 2026")
+        self.assertEqual(batch.iloc[0]["Assessor ID"], "RV-017")
+        self.assertEqual(
+            batch.iloc[0]["Assessment completed (UTC)"],
+            "2026-09-13T08:30:00+00:00",
+        )
+        self.assertEqual(batch.iloc[0]["Assessment duration (minutes)"], 30.0)
         self.assertEqual(batch.iloc[0]["Q1"], 1)
 
     def test_batch_row_management_deletes_only_selected_rows(self) -> None:

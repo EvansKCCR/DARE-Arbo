@@ -641,6 +641,11 @@ def initialize_state() -> None:
         "q5_autofilled_score": None,
         "q5_autofilled_comment": "",
         "q5_count_notice": "",
+        "assessor_id": "",
+        "assessment_started_at_utc": "",
+        "assessment_completed_at_utc": "",
+        "assessment_elapsed_seconds": None,
+        "assessment_completed_signature": "",
         "registry": [],
         "batch_grid": pd.DataFrame([empty_batch_row()]),
         "batch_editor_version": 0,
@@ -673,6 +678,10 @@ def initialize_state() -> None:
 def empty_batch_row() -> dict[str, Any]:
     row: dict[str, Any] = {
         "Study ID": "",
+        "Assessor ID": "",
+        "Assessment started (UTC)": "",
+        "Assessment completed (UTC)": "",
+        "Assessment duration (minutes)": None,
         "Citation or DOI": "",
         "Virus": "",
         "Target population": "",
@@ -789,6 +798,97 @@ def reset_single_assessment() -> None:
     st.session_state["q5_autofilled_score"] = None
     st.session_state["q5_autofilled_comment"] = ""
     st.session_state["q5_count_notice"] = ""
+    st.session_state["assessment_started_at_utc"] = utc_timestamp()
+    st.session_state["assessment_completed_at_utc"] = ""
+    st.session_state["assessment_elapsed_seconds"] = None
+    st.session_state["assessment_completed_signature"] = ""
+
+
+def utc_timestamp() -> str:
+    """Return a stable, timezone-aware timestamp for the assessment audit trail."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_utc_timestamp(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def format_elapsed_seconds(value: Any) -> str:
+    """Format a stored audit duration without losing the underlying seconds."""
+    try:
+        total_seconds = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return "Not available"
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours} h {minutes} min {seconds} s"
+    return f"{minutes} min {seconds} s"
+
+
+def ensure_assessment_started() -> str:
+    """Start the current study-virus-estimand clock once and preserve it across reruns."""
+    started = str(st.session_state.get("assessment_started_at_utc") or "")
+    if not parse_utc_timestamp(started):
+        started = utc_timestamp()
+        st.session_state["assessment_started_at_utc"] = started
+    return started
+
+
+def update_assessment_timing(
+    scores: dict[str, Any],
+    comments: dict[str, str],
+    complete: bool,
+) -> dict[str, Any]:
+    """Capture the end time when the current completed assessment last changed."""
+    started = ensure_assessment_started()
+    completion_signature = json.dumps(
+        {
+            "scores": {criterion.code: scores.get(criterion.code) for criterion in CRITERIA},
+            "comments": {criterion.code: comments.get(criterion.code, "") for criterion in CRITERIA},
+        },
+        sort_keys=True,
+        default=str,
+    )
+    previous_signature = str(
+        st.session_state.get("assessment_completed_signature") or ""
+    )
+    if complete and completion_signature != previous_signature:
+        completed = utc_timestamp()
+        started_dt = parse_utc_timestamp(started)
+        completed_dt = parse_utc_timestamp(completed)
+        elapsed_seconds = (
+            max(0, int((completed_dt - started_dt).total_seconds()))
+            if started_dt and completed_dt
+            else None
+        )
+        st.session_state["assessment_completed_at_utc"] = completed
+        st.session_state["assessment_elapsed_seconds"] = elapsed_seconds
+        st.session_state["assessment_completed_signature"] = completion_signature
+    elif not complete:
+        st.session_state["assessment_completed_at_utc"] = ""
+        st.session_state["assessment_elapsed_seconds"] = None
+        st.session_state["assessment_completed_signature"] = ""
+
+    elapsed_seconds = st.session_state.get("assessment_elapsed_seconds")
+    return {
+        "assessment_started_at_utc": started,
+        "assessment_completed_at_utc": str(
+            st.session_state.get("assessment_completed_at_utc") or ""
+        ),
+        "assessment_elapsed_seconds": elapsed_seconds,
+        "assessment_elapsed_minutes": (
+            round(float(elapsed_seconds) / 60, 2)
+            if elapsed_seconds is not None
+            else None
+        ),
+    }
 
 
 def apply_count_based_q5(count_audit: dict[str, Any]) -> None:
@@ -1102,6 +1202,19 @@ def document_intake(
     synthesis_path = SYNTHESIS_PATHS_BY_KEY[synthesis_path_key]
     metadata_col, upload_col = st.columns([1, 1.05])
     with metadata_col:
+        assessor_id = st.text_input(
+            "Assessor ID",
+            key="assessor_id",
+            placeholder="e.g., initials, reviewer code, or staff ID",
+            help=(
+                "Required when saving to the Appraiser registry. Use the same stable ID "
+                "across assessments when assessor-level auditability is needed."
+            ),
+        )
+        st.caption(
+            f"Assessment started: {ensure_assessment_started()} UTC. The completion time "
+            "is captured automatically when all applicable items are scored."
+        )
         study_id = st.text_input("Study ID / Author-year", placeholder="e.g., Author et al., 2024", key="study_id")
         citation = st.text_input(
             "Citation or DOI",
@@ -1321,7 +1434,13 @@ def document_intake(
                 key="numerator_provenance",
                 help="Observed counts are required for Q8. Posterior/model-derived expected positives remain separate.",
             )
-            reviewer = st.text_input("Reviewer/appraiser", key="reviewer")
+            st.markdown(f"**Assessor ID:** {assessor_id or 'Not entered'}")
+            st.markdown(
+                f"**Start time (UTC):** {st.session_state['assessment_started_at_utc']}"
+            )
+            st.caption(
+                "The end time and elapsed duration remain blank until the assessment is complete."
+            )
 
     with upload_col:
         uploaded_pdf = st.file_uploader(
@@ -1429,7 +1548,16 @@ def document_intake(
         "denominator_label": synthesis_path.denominator,
         "false_positive_rule": synthesis_path.false_positives,
         "numerator_provenance": numerator_provenance,
-        "reviewer": reviewer,
+        "assessor_id": assessor_id.strip(),
+        "reviewer": assessor_id.strip(),
+        "assessment_started_at_utc": st.session_state["assessment_started_at_utc"],
+        "assessment_completed_at_utc": st.session_state.get("assessment_completed_at_utc", ""),
+        "assessment_elapsed_seconds": st.session_state.get("assessment_elapsed_seconds"),
+        "assessment_elapsed_minutes": (
+            round(float(st.session_state["assessment_elapsed_seconds"]) / 60, 2)
+            if st.session_state.get("assessment_elapsed_seconds") is not None
+            else None
+        ),
         "assessment_date": date.today().isoformat(),
         "source_pdf": uploaded_pdf.name if uploaded_pdf else "",
         "source_pdf_sha256": hashlib.sha256(uploaded_pdf.getvalue()).hexdigest() if uploaded_pdf else "",
@@ -1594,6 +1722,8 @@ def single_results(
 ) -> None:
     st.subheader("4. Review and export")
     result = score_assessment(scores, pathway, endpoint_key)
+    timing = update_assessment_timing(scores, comments, result["complete"])
+    metadata = {**metadata, **timing}
     selected_classification = classify_synthesis(endpoint_key, verification_design)
     synthesis_path_key = str(metadata.get("synthesis_path_key") or "")
     path_definition = SYNTHESIS_PATHS_BY_KEY.get(synthesis_path_key)
@@ -1645,6 +1775,30 @@ def single_results(
     cols[2].metric("Study design", f"{sum(result['domains'][d]['score'] for d in DOMAINS[:2])} / {sum(result['domains'][d]['maximum'] for d in DOMAINS[:2])}")
     cols[3].metric("Assay", f"{result['domains']['Laboratory assay']['score']} / {result['domains']['Laboratory assay']['maximum']}")
     cols[4].metric("Reporting", f"{result['domains']['Reporting outcome']['score']} / {result['domains']['Reporting outcome']['maximum']}")
+
+    assessor_id = str(metadata.get("assessor_id") or "").strip()
+    completed_at = str(timing.get("assessment_completed_at_utc") or "")
+    if result["complete"]:
+        duration_text = format_elapsed_seconds(timing.get("assessment_elapsed_seconds"))
+        timing_status = f"Completed {completed_at} UTC · elapsed {duration_text}"
+    else:
+        started_dt = parse_utc_timestamp(timing["assessment_started_at_utc"])
+        live_elapsed = (
+            max(0, int((datetime.now(timezone.utc) - started_dt).total_seconds()))
+            if started_dt
+            else None
+        )
+        timing_status = f"In progress · elapsed {format_elapsed_seconds(live_elapsed)}"
+    st.caption(
+        "Assessment audit trail · "
+        f"Assessor ID: {assessor_id or 'not entered'} · "
+        f"Started {timing['assessment_started_at_utc']} UTC · {timing_status}"
+    )
+    if not assessor_id:
+        st.warning(
+            "Enter an Assessor ID in the study-details section before saving this "
+            "assessment to the Appraiser registry."
+        )
 
     if result["complete"]:
         st.success("All applicable criteria are scored. The total remains continuous and should be interpreted with the domain scores and audit comments.")
@@ -1794,7 +1948,16 @@ def single_results(
     download_cols[0].download_button("Download PNG overview", png_bytes, f"{safe_name}_DARE-Arbo_overview.png", "image/png", use_container_width=True)
     download_cols[1].download_button("Download CSV", csv_bytes, f"{safe_name}_DARE-Arbo.csv", "text/csv", use_container_width=True)
     download_cols[2].download_button("Download JSON", json_bytes, f"{safe_name}_DARE-Arbo.json", "application/json", use_container_width=True)
-    if download_cols[3].button("Save to Appraiser", use_container_width=True):
+    if download_cols[3].button(
+        "Save to Appraiser",
+        use_container_width=True,
+        disabled=not assessor_id,
+        help=(
+            "Enter an Assessor ID before saving this audit-trailed assessment."
+            if not assessor_id
+            else "Save this study-virus-estimand assessment with its timing audit trail."
+        ),
+    ):
         saved = {**record, "saved_at": datetime.now(timezone.utc).isoformat()}
         st.session_state["registry"].append(saved)
         st.success("Assessment added to the in-session Appraiser registry.")
@@ -1806,6 +1969,7 @@ def single_results(
 
 
 def assessor_page() -> None:
+    ensure_assessment_started()
     hero()
     st.markdown("Use one record per **study-virus-estimand**. Define the target population, biological endpoint, endpoint-defining assay, testing/verification population, observed numerator/denominator, and summary estimator before scoring.")
     endpoint_key, pathway, verification_design, synthesis_path_key = endpoint_controls()
@@ -1917,6 +2081,16 @@ def workbook_rows_to_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
         pathway = ENDPOINTS_BY_KEY[endpoint_key].default_pathway
         record: dict[str, Any] = {
             "study_id": study_id,
+            "assessor_id": row.get(normalized_column("Assessor ID")),
+            "assessment_started_at_utc": row.get(
+                normalized_column("Assessment started (UTC)")
+            ),
+            "assessment_completed_at_utc": row.get(
+                normalized_column("Assessment completed (UTC)")
+            ),
+            "assessment_elapsed_minutes": row.get(
+                normalized_column("Assessment duration (minutes)")
+            ),
             "target_population": row.get("Target population"),
             "target_population_category": row.get("Target-population category"),
             "sampling_frame_category": row.get("Sampling-frame category"),
@@ -1964,6 +2138,23 @@ def registry_records_to_batch_frame(records: list[dict[str, Any]]) -> pd.DataFra
     for record in records:
         row = empty_batch_row()
         row["Study ID"] = str(clean(record.get("study_id")) or "").strip()
+        row["Assessor ID"] = str(
+            clean(record.get("assessor_id")) or clean(record.get("reviewer")) or ""
+        ).strip()
+        row["Assessment started (UTC)"] = str(
+            clean(record.get("assessment_started_at_utc")) or ""
+        ).strip()
+        row["Assessment completed (UTC)"] = str(
+            clean(record.get("assessment_completed_at_utc")) or ""
+        ).strip()
+        elapsed_minutes = clean(record.get("assessment_elapsed_minutes"))
+        elapsed_seconds = clean(record.get("assessment_elapsed_seconds"))
+        if elapsed_minutes is None and elapsed_seconds is not None:
+            try:
+                elapsed_minutes = round(float(elapsed_seconds) / 60, 2)
+            except (TypeError, ValueError):
+                elapsed_minutes = None
+        row["Assessment duration (minutes)"] = elapsed_minutes
         row["Citation or DOI"] = str(clean(record.get("citation")) or "").strip()
         row["Virus"] = str(clean(record.get("virus")) or "").strip()
         row["Target population"] = str(clean(record.get("target_population")) or "").strip()
@@ -2101,6 +2292,22 @@ def batch_editor() -> pd.DataFrame:
     )
     column_config: dict[str, Any] = {
         "Study ID": st.column_config.TextColumn(required=True),
+        "Assessor ID": st.column_config.TextColumn(
+            help="Stable initials, reviewer code, or staff ID recorded by the Assessor."
+        ),
+        "Assessment started (UTC)": st.column_config.TextColumn(
+            disabled=True,
+            help="Automatically captured when the Assessor session begins.",
+        ),
+        "Assessment completed (UTC)": st.column_config.TextColumn(
+            disabled=True,
+            help="Automatically captured when all applicable DARE-Arbo items are complete.",
+        ),
+        "Assessment duration (minutes)": st.column_config.NumberColumn(
+            disabled=True,
+            format="%.2f",
+            help="Elapsed time from assessment start to the most recent completed scoring state.",
+        ),
         "Citation or DOI": st.column_config.TextColumn(),
         "Virus": st.column_config.TextColumn(),
         "Target population": st.column_config.TextColumn(),
@@ -2179,7 +2386,9 @@ def batch_editor() -> pd.DataFrame:
             step=1,
         )
     editor_column_order = [
-        "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
+        "Study ID", "Assessor ID", "Assessment started (UTC)",
+        "Assessment completed (UTC)", "Assessment duration (minutes)",
+        "Citation or DOI", "Virus", "Target population", "Target-population category",
         "Achieved sample representation", "Sampling frame / source population", "Sampling-frame category", "Sampling/recruitment method",
         "Primary assay", "Confirmatory assay", "Assay validation / QC",
         "Endpoint procedure consistency", "Assay-performance correction", "Synthesis path",
@@ -2532,6 +2741,10 @@ def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         )
         detail = {
             "Study ID": study_id,
+            "Assessor ID": row.get("Assessor ID", ""),
+            "Assessment started (UTC)": row.get("Assessment started (UTC)", ""),
+            "Assessment completed (UTC)": row.get("Assessment completed (UTC)", ""),
+            "Assessment duration (minutes)": row.get("Assessment duration (minutes)"),
             "Citation or DOI": row.get("Citation or DOI", ""),
             "Virus": row.get("Virus", ""),
             "Target population": row.get("Target population", ""),
@@ -2642,7 +2855,13 @@ def appraiser_page() -> None:
     if registry:
         with st.expander(f"In-session Assessor registry ({len(registry)} records)", expanded=True):
             registry_df = pd.DataFrame(registry)
-            preferred = [column for column in ["study_id", "virus", "target_population_category", "sampling_frame_category", "endpoint_label", "synthesis_tier", "dare_total", "dare_applicable_maximum", "dare_complete"] if column in registry_df.columns]
+            preferred = [column for column in [
+                "study_id", "assessor_id", "assessment_started_at_utc",
+                "assessment_completed_at_utc", "assessment_elapsed_minutes",
+                "virus", "target_population_category", "sampling_frame_category",
+                "endpoint_label", "synthesis_tier", "dare_total",
+                "dare_applicable_maximum", "dare_complete",
+            ] if column in registry_df.columns]
             st.dataframe(registry_df[preferred] if preferred else registry_df, use_container_width=True, hide_index=True)
             registry_cols = st.columns([1, 1, 1.45, 1])
             registry_cols[0].download_button("Download registry CSV", registry_df.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_registry.csv", "text/csv", use_container_width=True)
@@ -2696,7 +2915,9 @@ def appraiser_page() -> None:
     export_cols = st.columns(3)
     export_cols[0].download_button("Download batch details", details.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_batch_details.csv", "text/csv", use_container_width=True)
     summary_columns = [
-        "Study ID", "Citation or DOI", "Virus", "Target population", "Target-population category",
+        "Study ID", "Assessor ID", "Assessment started (UTC)",
+        "Assessment completed (UTC)", "Assessment duration (minutes)",
+        "Citation or DOI", "Virus", "Target population", "Target-population category",
         "Sampling frame / source population", "Sampling-frame category", "Target-frame matrix status", "Target-frame matrix rationale", "Sampling/recruitment method", "Endpoint",
         "Endpoint structure", "Primary assay", "Confirmatory assay", "Assay role", "Confirmation role", "Confirmation coverage", "Testing strategy", "Assay type",
         "Summary estimator", "Numerator provenance",
