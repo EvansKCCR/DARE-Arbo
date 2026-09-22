@@ -3,7 +3,6 @@ from datetime import date
 from pathlib import Path
 import logging
 import json
-from html import escape
 import streamlit as st
 from access import has_full_access
 from drive_store import DriveStore, create_service, ALLOWED
@@ -146,7 +145,7 @@ with st.sidebar:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width='stretch')
     st.markdown('### DARE-Arbo')
     st.caption('Study & collaboration portal')
-    page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Study timeline', 'Team', 'Development workflow', 'Collaborate', 'Project documents'], label_visibility='collapsed')
+    page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents'], label_visibility='collapsed')
     st.divider()
     config = settings()
     if getattr(st.user, 'is_logged_in', False):
@@ -195,9 +194,6 @@ if page == 'Overview':
         st.write('**SYNERGY-NGS-2025**')
         st.caption('Framework development collaboration')
 
-    st.divider()
-    st.markdown((ROOT / 'participation.md').read_text(encoding='utf-8'))
-
 elif page == 'Framework & methods':
     st.title('Framework & methods')
     st.caption('Methodology paper development protocol · Version 1.0 · 01 April 2026')
@@ -218,42 +214,11 @@ elif page == 'Framework & methods':
     with st.expander('Ethics and dissemination'):
         st.write('The protocol evaluates published reports and does not involve recruitment of human participants or collection of identifiable participant-level data. Materials will be disseminated with the methodology paper, subject to repository, licensing and copyright requirements.')
     st.link_button('Related systematic review protocol ↗', 'https://doi.org/10.1186/s13643-025-02879-z')
+    st.header('Primary endpoint-defining assay pathway')
+    figure('primary_endpoint_defining_assay_pathway.png', 'Primary endpoint-defining assay pathway')
+    st.header('DARE-Arbo workflow')
+    figure('DARE_Arbo_workflow.png', 'DARE-Arbo appraisal workflow')
 
-elif page == 'Study timeline':
-    import altair as alt
-    import pandas as pd
-    st.title('Study timeline')
-    st.write('From protocol consolidation to repository archiving and journal submission: January 2026–May 2027.')
-    st.caption('Dates, owners and recorded statuses come from the workbook’s Activity Register. Statuses are recorded values, not inferred from today’s date.')
-    tasks = STUDY['tasks']
-    for col, label, value in zip(st.columns(3), ['Activities', 'Recorded completed', 'Recorded in progress'], [len(tasks), sum(t['status']=='Completed' for t in tasks), sum(t['status']=='In progress' for t in tasks)]):
-        col.metric(label, value)
-    selection = st.multiselect('Filter workstreams', list(dict.fromkeys(t['workstream'] for t in tasks)))
-    rows = [t for t in tasks if not selection or t['workstream'] in selection]
-    if rows:
-        frame = pd.DataFrame(rows)
-        frame['chart_end'] = pd.to_datetime(frame['end']) + pd.Timedelta(days=1)
-        frame['label'] = frame['id'] + ' · ' + frame['workstream']
-        chart = alt.Chart(frame).mark_bar(cornerRadius=3).encode(
-            x=alt.X('start:T', title='Scheduled dates', axis=alt.Axis(format='%b %Y')),
-            x2='chart_end:T',
-            y=alt.Y('label:N', sort=frame['label'].tolist(), title=None),
-            color=alt.Color('status:N', title='Recorded status', scale=alt.Scale(
-                domain=['Completed', 'In progress', 'Planned', 'Not started'],
-                range=['#006B3F', '#FCD116', '#CE1126', '#111111'])),
-            tooltip=[alt.Tooltip('activity:N', title='Activity'), alt.Tooltip('start:T', title='Start', format='%d %b %Y'),
-                     alt.Tooltip('end:T', title='End', format='%d %b %Y'), alt.Tooltip('status:N', title='Status'),
-                     alt.Tooltip('owner:N', title='Owner'), alt.Tooltip('output:N', title='Output')]
-        ).properties(height=max(220, len(rows)*30)).configure_legend(orient='bottom')
-        st.altair_chart(chart, width='stretch')
-        st.subheader('Activities and milestones')
-        for task in rows:
-            with st.expander(f"{task['id']} · {task['activity']}"):
-                start, end = date.fromisoformat(task['start']), date.fromisoformat(task['end'])
-                st.write(f"**{start:%d %b %Y} – {end:%d %b %Y}** · {task['status']}")
-                st.write(f"**Output:** {task['output']}")
-                st.write(f"**Owner (as recorded):** {task['owner']}")
-    st.caption('Source: ' + STUDY['source'] + ' · Activity Register. Owner initials AAA and JM appear in the register but do not exactly match the team list; they are retained without assigning them to a person.')
 elif page == 'Team':
     st.title('Meet the study team')
     st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
@@ -266,16 +231,28 @@ elif page == 'Team':
     st.caption(f'{len(members)} team members')
     if not members:
         st.info('No team members match your search.')
-    for offset in range(0, len(members), 2):
-        for col, member in zip(st.columns(2), members[offset:offset+2]):
+    portraits = {
+        'John Humphrey Amuasi': 'John_H_Amuasi.png',
+        'Anthony Afum-Adjei Awuah': 'Anthony_A_A_Awuah.png',
+        'Christian Obirikorang': 'Christian_Obirikorang.png',
+        'Evans Asamoah Adu': 'Evans_Asamoah_Adu.png',
+    }
+    featured = [m for m in members if m['name'] in portraits]
+    for offset in range(0, len(featured), 2):
+        for col, member in zip(st.columns(2), featured[offset:offset+2]):
             with col.container(border=True):
-                st.markdown('<div style="display:inline-block;background:#006B3F;color:white;border-bottom:4px solid #FCD116;border-radius:12px;padding:12px 18px;font-weight:700">' + escape(member['initials']) + '</div>', unsafe_allow_html=True)
+                st.image(str(ROOT / 'Images' / portraits[member['name']]), width=220)
                 st.subheader(member['name'])
                 st.write('**' + member['position'] + '**')
                 st.caption(member['affiliation'])
                 st.write('**Expertise**')
                 st.write(member['expertise'])
-    st.caption('Source: ' + STUDY['source'] + ' · Team_members. Profile initials are used in place of photographs.')
+    remaining = [m for m in members if m['name'] not in portraits]
+    if remaining:
+        st.subheader('Additional team members')
+        st.dataframe([{'Name': m['name'], 'Position': m['position'], 'Affiliation': m['affiliation'],
+                       'Expertise': m['expertise']} for m in remaining], hide_index=True, width='stretch')
+    st.caption('Source: ' + STUDY['source'] + ' · Team_members. Photographs supplied by the project team.')
 
 elif page == 'Development workflow':
     st.title('Development workflow')
