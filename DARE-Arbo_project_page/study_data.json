@@ -1,0 +1,281 @@
+{
+  "source": "DARE-Arbo_Project_Gantt_Jan-Dec_2026.xlsx",
+  "tasks": [
+    {
+      "id": "1.0",
+      "workstream": "Initiation",
+      "activity": "Protocol consolidation and governance",
+      "output": "Approved development protocol and project controls",
+      "start": "2026-01-05",
+      "end": "2026-01-30",
+      "owner": "JHA, AAA, CO, EAA",
+      "status": "Completed"
+    },
+    {
+      "id": "2.0",
+      "workstream": "Evidence mapping",
+      "activity": "Review appraisal frameworks and methodological literature",
+      "output": "Framework inventory and construct map",
+      "start": "2026-01-12",
+      "end": "2026-02-27",
+      "owner": "EAA, LMA, JM",
+      "status": "Completed"
+    },
+    {
+      "id": "3.0",
+      "workstream": "Evidence mapping",
+      "activity": "Map arbovirus reviews and meta-analyses",
+      "output": "Summary tables of relevant arbovirus reviews and meta-analyses literature",
+      "start": "2026-01-19",
+      "end": "2026-03-13",
+      "owner": "EAA, FFA",
+      "status": "Completed"
+    },
+    {
+      "id": "4.0",
+      "workstream": "Evidence mapping",
+      "activity": "Curate and characterize primary surveillance studies",
+      "output": "Summary tables of primary arbovirus literature",
+      "start": "2026-02-02",
+      "end": "2026-04-03",
+      "owner": "RNA, JBE, AOB",
+      "status": "Completed"
+    },
+    {
+      "id": "5.0",
+      "workstream": "Evidence mapping",
+      "activity": "Map methodological and reporting challenges requiring consideration in arbovirus surveillance studies",
+      "output": "Summary tables of methodological and reporting features requiring appraisal",
+      "start": "2026-03-02",
+      "end": "2026-04-30",
+      "owner": "EAA, LMA, JG",
+      "status": "Completed"
+    },
+    {
+      "id": "6.0",
+      "workstream": "Framework design",
+      "activity": "Define domains, criteria, and article-outcome unit",
+      "output": "Draft DARE-Arbo architecture",
+      "start": "2026-03-16",
+      "end": "2026-05-15",
+      "owner": "All team members",
+      "status": "Completed"
+    },
+    {
+      "id": "7.0",
+      "workstream": "Framework design",
+      "activity": "Develop endpoint and measurement-pathway classifications",
+      "output": "Endpoint-specific decision structure",
+      "start": "2026-04-01",
+      "end": "2026-06-12",
+      "owner": "All team members",
+      "status": "Completed"
+    },
+    {
+      "id": "8.0",
+      "workstream": "Operationalization",
+      "activity": "Develop scoring codebook and applicability rules",
+      "output": "Draft scoring codebook",
+      "start": "2026-04-20",
+      "end": "2026-06-26",
+      "owner": "EAA, JM, LMA (reviewed by all)",
+      "status": "Completed"
+    },
+    {
+      "id": "9.0",
+      "workstream": "Operationalization",
+      "activity": "Develop appraisal library, decision tree, and worked examples",
+      "output": "Application guide and decision tree",
+      "start": "2026-05-04",
+      "end": "2026-07-31",
+      "owner": "All team members",
+      "status": "Completed"
+    },
+    {
+      "id": "10.0",
+      "workstream": "Internal review",
+      "activity": "Internal framework review, consensus refinement, and approval for piloting",
+      "output": "Version 1.0 framework approved for pilot testing",
+      "start": "2026-08-03",
+      "end": "2026-08-14",
+      "owner": "EAA, AO, NS",
+      "status": "Completed"
+    },
+    {
+      "id": "11.0",
+      "workstream": "Digital implementation",
+      "activity": "Build digital workspace and structured data model",
+      "output": "Functional Streamlit workspace",
+      "start": "2026-07-15",
+      "end": "2026-08-31",
+      "owner": "EAA, AO, AOB (reviewed by all)",
+      "status": "Completed"
+    },
+    {
+      "id": "12.0",
+      "workstream": "Pilot preparation",
+      "activity": "Select diverse pilot article-outcomes",
+      "output": "Final pilot sample and assessment inventory",
+      "start": "2026-08-15",
+      "end": "2026-09-10",
+      "owner": "EAA, AO, AAA",
+      "status": "Completed"
+    },
+    {
+      "id": "13.0",
+      "workstream": "Call for collaboration",
+      "activity": "Recruit and confirm external collaborators",
+      "output": "Collaborators selected and collaboration agreements finalized",
+      "start": "2026-09-22",
+      "end": "2026-10-10",
+      "owner": "External collaborators",
+      "status": "In progress"
+    },
+    {
+      "id": "14.0",
+      "workstream": "Pilot evaluation",
+      "activity": "Assessor orientation and independent appraisal",
+      "output": "Locked independent assessment datasets",
+      "start": "2026-10-12",
+      "end": "2026-11-06",
+      "owner": "EAA, AO",
+      "status": "Planned / update"
+    },
+    {
+      "id": "15.0",
+      "workstream": "Analysis",
+      "activity": "Data verification and inter-assessor agreement analysis",
+      "output": "Criterion-, domain-, and overall reliability results",
+      "start": "2026-11-09",
+      "end": "2026-11-20",
+      "owner": "All collaborators",
+      "status": "Not started"
+    },
+    {
+      "id": "16.0",
+      "workstream": "Refinement",
+      "activity": "Source-level discrepancy audit and adjudication",
+      "output": "Audited discrepancies and revised operational rules",
+      "start": "2026-11-23",
+      "end": "2026-12-11",
+      "owner": "All collaborators",
+      "status": "Not started"
+    },
+    {
+      "id": "17.0",
+      "workstream": "Refinement",
+      "activity": "Reconcile codebook, decision tree, digital workspace, and appendices",
+      "output": "Version-aligned final framework package",
+      "start": "2026-12-14",
+      "end": "2026-12-23",
+      "owner": "All collaborators",
+      "status": "Not started"
+    },
+    {
+      "id": "18.0",
+      "workstream": "Reporting",
+      "activity": "Draft, revise, and internally review methodology manuscript",
+      "output": "Submission-ready manuscript and supplements",
+      "start": "2027-01-04",
+      "end": "2027-02-08",
+      "owner": "EAA",
+      "status": "Not started"
+    },
+    {
+      "id": "19.0",
+      "workstream": "Dissemination",
+      "activity": "Repository preparation, documentation, archiving, and journal submission",
+      "output": "Archived materials and journal submission",
+      "start": "2027-01-25",
+      "end": "2027-02-20",
+      "owner": "EAA",
+      "status": "Not started"
+    }
+  ],
+  "team": [
+    {
+      "name": "John Humphrey Amuasi",
+      "initials": "JHA",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Infectious Disease, Global and One Health",
+      "position": "Group Leader (PI)"
+    },
+    {
+      "name": "Anthony Afum-Adjei Awuah",
+      "initials": "AAAA",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Infectious Disease, arbovirus surveillance and outbreak investigation",
+      "position": "Deputy Group Leader"
+    },
+    {
+      "name": "Christian Obirikorang",
+      "initials": "CO",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Laboratory diagnosis, serology, molecular testing, or assay validation",
+      "position": "Vice Dean, School of Medical Sciences"
+    },
+    {
+      "name": "Evans Asamoah Adu",
+      "initials": "EAA",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Systematic reviews, meta-analysis, evidence appraisal, Laboratory diagnosis",
+      "position": "PhD fellow"
+    },
+    {
+      "name": "Leslie Mawuli Aglanu",
+      "initials": "LMA",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Evaluation of methodological and reporting frameworks, Social epidemiologist",
+      "position": "Research fellow"
+    },
+    {
+      "name": "Jonathan Gmanyami",
+      "initials": "JG",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Systematic reviews, meta-analysis; Global Health",
+      "position": "Research fellow"
+    },
+    {
+      "name": "Alexander O. Boakye",
+      "initials": "AOB",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Laboratory diagnosis, serology, molecular testing and infectious disease surveillance",
+      "position": "Senior Research Officer"
+    },
+    {
+      "name": "Afolabi Owoloye",
+      "initials": "AO",
+      "affiliation": "Mountain Top University",
+      "expertise": "Artificial intelligence/Machine Learning, Biostatistics",
+      "position": "PhD fellow"
+    },
+    {
+      "name": "Natalia Shakela",
+      "initials": "NS",
+      "affiliation": "Namibia University of Science and Technology",
+      "expertise": "Laboratory diagnosis",
+      "position": "PhD fellow"
+    },
+    {
+      "name": "Rasheda Nyamekye Aziz",
+      "initials": "RNA",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Laboratory diagnosis, serology, molecular testing",
+      "position": "Research Assistant"
+    },
+    {
+      "name": "Jessica Bludo Edinam",
+      "initials": "JBE",
+      "affiliation": "Global Health and Infectious Disease Research Group",
+      "expertise": "Laboratory diagnosis, serology, molecular testing",
+      "position": "Research Assistant"
+    },
+    {
+      "name": "Felicia Fafa Amezugbe",
+      "initials": "FFA",
+      "affiliation": "Korle Bu Teaching Hospital",
+      "expertise": "Epidemiology and clinical care",
+      "position": "Medical Doctor"
+    }
+  ]
+}
