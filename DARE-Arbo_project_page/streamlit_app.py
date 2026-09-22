@@ -9,6 +9,8 @@ from access import has_full_access
 from drive_store import DriveStore, create_service, ALLOWED
 
 ROOT = Path(__file__).resolve().parent
+WORKSPACE_URL = 'https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/'
+INTEREST_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSe5dFJ4mjU7XFID1mlbH_e0r1lHR8sOxIOkEEWdnVB3LBmgBg/viewform?usp=header'
 STUDY = json.loads((ROOT / 'study_data.json').read_text(encoding='utf-8'))
 st.set_page_config(page_title='DARE-Arbo | Study & collaboration', page_icon='🧬', layout='wide')
 
@@ -35,8 +37,21 @@ def figure(filename, caption):
 
 def documents():
     st.header('Project documents')
-    st.subheader('Public study protocol')
-    st.write('The framework development protocol is available to everyone. Choose Public protocol in the navigation to read the full text without signing in.')
+    st.subheader('Public project documents')
+    st.caption('Available to all visitors. No sign-in required.')
+    public_files = [
+        ('Framework development protocol', 'DARE-Arbo_framework_development.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+        ('Updated project Gantt schedule', 'DARE-Arbo_Project_Gantt_Updated_Sep2026-May2027.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+    ]
+    for label, filename, mime in public_files:
+        with st.container(border=True):
+            st.write('**' + label + '**')
+            st.download_button('Download ' + label.lower(), (ROOT / filename).read_bytes(), file_name=filename, mime=mime, key='public_' + filename)
+    with st.expander('Read the framework development protocol online'):
+        from public_protocol import protocol_sections
+        for section in protocol_sections():
+            st.subheader(section['title'])
+            st.html(section['html'])
     st.divider()
     st.subheader('Collaborator library')
     st.write('A shared library for approved collaborators. Full access is required to browse, upload or download study documents.')
@@ -100,7 +115,22 @@ st.markdown('''<style>
 [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"]{border-top-color:#FCD116}
 [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"]{border-top-color:#CE1126}
 [data-testid="stColumn"]:nth-child(4) [data-testid="stMetric"]{border-top-color:#111111}
-[data-testid="stSidebar"]{background:#FFF8D6;border-right:1px solid #FCD116}
+[data-testid="stSidebar"]{background:linear-gradient(165deg,#8B1426 0%,#45101A 42%,#111111 100%);border-right:1px solid #661320;color:#FFFFFF}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary{color:#FFFFFF}
+[data-testid="stSidebar"] [data-testid="stHeading"] h3{color:#FFFFFF}
+[data-testid="stSidebar"] [data-testid="stImage"]{background:#FFFFFF;border-radius:12px;padding:8px}
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{flex-direction:row!important;flex-wrap:nowrap!important;gap:12px}
+[data-testid="stSidebar"] [data-testid="stColumn"]{min-width:0!important;width:calc(50% - 6px)!important;flex:1 1 0!important}
+[data-testid="stSidebar"] [data-testid="stImage"] img{height:100px;object-fit:contain}
+[data-testid="stSidebar"] button svg{fill:currentColor;color:#FFFFFF}
+[data-testid="stSidebar"] hr{border-color:#B76470}
+[data-testid="stSidebar"] [data-testid="stExpander"]{border-color:#B76470}
+[data-testid="stSidebar"] button{background:#251116;color:#FFFFFF;border-color:#B76470}
+[data-testid="stSidebar"] button:hover{background:#A51D32;border-color:#FFFFFF;color:#FFFFFF}
+[data-testid="stSidebar"] [role="radio"][aria-checked="true"]{background:#CE1126}
 [data-testid="stHeading"] h1,[data-testid="stHeading"] h2,[data-testid="stHeading"] h3{color:#006B3F}
 [data-testid="stAlertContainer"]{background:#FFF8D6;color:#111111;border-left:4px solid #FCD116}
 [data-testid="stAlertContainer"] a{color:#004D2D}
@@ -109,10 +139,14 @@ a:focus-visible,button:focus-visible{outline:3px solid #CE1126;outline-offset:3p
 </style>''', unsafe_allow_html=True)
 
 with st.sidebar:
-    st.image(str(ROOT / 'Logo.jpeg'), width=115)
+    ghid_logo, synergy_logo = st.columns(2)
+    with ghid_logo:
+        st.image(str(ROOT / 'Logo.jpeg'), width='stretch')
+    with synergy_logo:
+        st.image(str(ROOT / 'Synergy_NGS2025.png'), width='stretch')
     st.markdown('### DARE-Arbo')
     st.caption('Study & collaboration portal')
-    page = st.radio('Explore the study', ['Overview', 'Public protocol', 'Framework & methods', 'Study timeline', 'Team', 'Development workflow', 'Collaborate', 'Project documents'], label_visibility='collapsed')
+    page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Study timeline', 'Team', 'Development workflow', 'Collaborate', 'Project documents'], label_visibility='collapsed')
     st.divider()
     config = settings()
     if getattr(st.user, 'is_logged_in', False):
@@ -132,6 +166,11 @@ if page == 'Overview':
     <h1>DARE-Arbo</h1><p>An endpoint-specific appraisal framework for strengthening the interpretation and synthesis of arbovirus surveillance evidence.</p></div>''', unsafe_allow_html=True)
     st.header('About DARE-Arbo')
     st.write((ROOT / 'Overview.txt').read_text(encoding='utf-8-sig').strip())
+    workspace_action, interest_action = st.columns(2)
+    with workspace_action:
+        st.link_button('Open the digital workspace ↗', WORKSPACE_URL, type='primary', width='stretch')
+    with interest_action:
+        st.link_button('Express interest in collaborating ↗', INTEREST_URL, width='stretch')
     for column, value, label in zip(st.columns(4), ['3', '12', '47', '36'], ['Appraisal domains', 'Scored components', 'Planned pilot article-outcomes', 'Pilot publications']):
         column.metric(label, value)
     st.header('Make each estimate interpretable')
@@ -155,20 +194,9 @@ if page == 'Overview':
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
         st.caption('Framework development collaboration')
-    st.link_button('Express interest in collaborating ↗', 'https://forms.gle/4jigcLBfeqFhMVZP6', type='primary')
 
-elif page == 'Public protocol':
-    from public_protocol import protocol_sections
-    st.title('Framework development protocol')
-    st.caption('Public access · No sign-in required · Protocol version 1.0, 01 April 2026')
-    st.write('Read the full text of DARE-Arbo_framework_development.docx, including its study methods, analysis plan and references.')
-    sections = protocol_sections()
-    selected = st.selectbox('Read a section', ['Full document'] + [s['title'] for s in sections])
-    for section in sections:
-        if selected == 'Full document' or selected == section['title']:
-            st.header(section['title'])
-            st.html(section['html'])
-    st.caption('Text and tables are read from the supplied Word protocol. Layout is adapted for online reading.')
+    st.divider()
+    st.markdown((ROOT / 'participation.md').read_text(encoding='utf-8'))
 
 elif page == 'Framework & methods':
     st.title('Framework & methods')
@@ -195,7 +223,7 @@ elif page == 'Study timeline':
     import altair as alt
     import pandas as pd
     st.title('Study timeline')
-    st.write('From protocol consolidation to repository archiving and journal submission: January 2026–February 2027.')
+    st.write('From protocol consolidation to repository archiving and journal submission: January 2026–May 2027.')
     st.caption('Dates, owners and recorded statuses come from the workbook’s Activity Register. Statuses are recorded values, not inferred from today’s date.')
     tasks = STUDY['tasks']
     for col, label, value in zip(st.columns(3), ['Activities', 'Recorded completed', 'Recorded in progress'], [len(tasks), sum(t['status']=='Completed' for t in tasks), sum(t['status']=='In progress' for t in tasks)]):
@@ -211,7 +239,7 @@ elif page == 'Study timeline':
             x2='chart_end:T',
             y=alt.Y('label:N', sort=frame['label'].tolist(), title=None),
             color=alt.Color('status:N', title='Recorded status', scale=alt.Scale(
-                domain=['Completed', 'In progress', 'Planned / update', 'Not started'],
+                domain=['Completed', 'In progress', 'Planned', 'Not started'],
                 range=['#006B3F', '#FCD116', '#CE1126', '#111111'])),
             tooltip=[alt.Tooltip('activity:N', title='Activity'), alt.Tooltip('start:T', title='Start', format='%d %b %Y'),
                      alt.Tooltip('end:T', title='End', format='%d %b %Y'), alt.Tooltip('status:N', title='Status'),
@@ -226,9 +254,6 @@ elif page == 'Study timeline':
                 st.write(f"**Output:** {task['output']}")
                 st.write(f"**Owner (as recorded):** {task['owner']}")
     st.caption('Source: ' + STUDY['source'] + ' · Activity Register. Owner initials AAA and JM appear in the register but do not exactly match the team list; they are retained without assigning them to a person.')
-    with st.expander('Schedule differences in the earlier collaboration notice'):
-        st.write('The earlier notice places discrepancy auditing on 09–20 November 2026 and manuscript development from 05 January 2027. The activity register places agreement analysis on 09–20 November, discrepancy auditing on 23 November–11 December, and manuscript development from 04 January 2027. This timeline follows the activity register. Its dated rows extend beyond the workbook title to 20 February 2027.')
-
 elif page == 'Team':
     st.title('Meet the study team')
     st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
@@ -262,10 +287,10 @@ elif page == 'Development workflow':
 elif page == 'Collaborate':
     st.title('Help refine DARE-Arbo')
     st.write('Researchers and practitioners are invited to contribute to pilot testing and expert review of the framework.')
-    opening, closing = date(2026, 9, 22), date(2026, 10, 10)
+    opening, closing = date(2026, 9, 22), date(2026, 10, 31)
     today = date.today()
-    st.info('Expression-of-interest window: 22 September–10 October 2026. ' + ('The scheduled window is open.' if opening <= today <= closing else 'The scheduled window has closed.' if today > closing else 'The scheduled window has not yet opened.'))
-    st.link_button('Complete the expression-of-interest form ↗', 'https://forms.gle/4jigcLBfeqFhMVZP6', type='primary')
+    st.info('Expression-of-interest window: 22 September–31 October 2026. ' + ('The scheduled window is open.' if opening <= today <= closing else 'The scheduled window has closed.' if today > closing else 'The scheduled window has not yet opened.'))
+    st.link_button('Complete the expression-of-interest form ↗', INTEREST_URL, type='primary')
     c1, c2 = st.columns(2)
     with c1:
         st.subheader('Who can contribute?')
@@ -273,18 +298,8 @@ elif page == 'Collaborate':
     with c2:
         st.subheader('Contribution opportunities')
         st.markdown('- Independently appraise selected article-outcomes\n- Review criteria, the scoring codebook and decision rules\n- Assess clarity, relevance and applicability\n- Identify ambiguous criteria and implementation challenges\n- Contribute to disagreement audits and refinement\n- Review the manuscript or supplementary materials, where applicable')
-    st.header('Participation timeline')
-    st.caption('Dates from the original collaborator call. See Study timeline for the activity register schedule and its date differences.')
-    for dates, title, body in [
-        ('22 Sep–10 Oct 2026', 'Expression of interest', 'Submit the form; collaborator selection and collaboration agreements follow.'),
-        ('12 Oct–06 Nov 2026', 'Orientation and independent appraisal', 'Attend assessor orientation and appraise assigned article-outcomes.'),
-        ('09–20 Nov 2026', 'Discrepancy audit and adjudication', 'Selected collaborators clarify judgments or contribute to source-level adjudication.'),
-        ('23 Nov–23 Dec 2026', 'Framework refinement', 'Review revisions to the codebook, decision tree, workspace or appendices as relevant.'),
-        ('05 Jan–08 Feb 2027', 'Manuscript development', 'Contribute to internal review of the methodology manuscript and supporting materials.')]:
-        with st.container(border=True):
-            st.caption(dates)
-            st.subheader(title)
-            st.write(body)
+    st.markdown((ROOT / 'participation.md').read_text(encoding='utf-8'))
+
 else:
     documents()
 
