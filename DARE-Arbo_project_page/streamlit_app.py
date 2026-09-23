@@ -34,6 +34,30 @@ def figure(filename, caption):
         st.image(str(ROOT / filename), caption=caption, width='stretch')
 
 
+def translation_table(workbook_path):
+    from openpyxl import load_workbook
+    workbook = load_workbook(workbook_path, data_only=True)
+    try:
+        sheet = workbook.worksheets[0]
+        rows = []
+        for row in range(3, sheet.max_row + 1):
+            values = []
+            for column in range(1, 4):
+                cell = sheet.cell(row, column)
+                value = cell.value
+                if value is None:
+                    for merged in sheet.merged_cells.ranges:
+                        if cell.coordinate in merged:
+                            value = sheet.cell(merged.min_row, merged.min_col).value
+                            break
+                values.append('' if value is None else str(value))
+            if any(values):
+                rows.append(dict(zip(['DARE-Arbo domain', 'Empirical finding', 'Appraisal construct'], values)))
+        return rows
+    finally:
+        workbook.close()
+
+
 def documents():
     st.header('Project documents')
     st.subheader('Public project documents')
@@ -196,8 +220,7 @@ if page == 'Overview':
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
         st.write('**ADVANCING COLLABORATIVE SCIENCE & INNOVATION**')
-        st.link_button('SYNERGY-NGS LinkedIn admin dashboard ↗', 'https://www.linkedin.com/company/129253938/admin/dashboard/')
-        st.caption('The supplied LinkedIn dashboard link requires page administrator access.')
+        st.link_button('SYNERGY-NGS-2025 on LinkedIn ↗', 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true')
 
 elif page == 'Framework & methods':
     st.title('Framework & methods')
@@ -225,10 +248,13 @@ elif page == 'Framework & methods':
     figure('DARE_Arbo_workflow.png', 'DARE-Arbo appraisal workflow')
     st.header('From literature findings to appraisal constructs')
     st.write('Translation of primary-literature findings into DARE-Arbo domains and appraisal constructs.')
-    translation_rows = json.loads((ROOT / 'translation_data.json').read_text(encoding='utf-8'))
-    with st.expander('Read the translation table', expanded=True):
-        st.table(translation_rows)
-    st.download_button('Download Translation workbook', (ROOT / 'Translation.xlsx').read_bytes(), file_name='Translation.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key='translation_workbook')
+    translation_path = ROOT / 'Translation.xlsx'
+    if translation_path.is_file():
+        with st.expander('Read the translation table', expanded=True):
+            st.table(translation_table(translation_path))
+        st.download_button('Download Translation workbook', translation_path.read_bytes(), file_name='Translation.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key='translation_workbook')
+    else:
+        st.info('The translation workbook is currently unavailable. The project administrator needs to include Translation.xlsx in this deployment.')
 
 elif page == 'Team':
     st.title('Meet the study team')
