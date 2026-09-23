@@ -110,6 +110,7 @@ st.markdown('''<style>
 .hero h1{color:white;font-size:3.1rem;letter-spacing:-1.5px;margin:0}
 .hero p{color:#FFFFFF;font-size:1.13rem;max-width:820px;line-height:1.7}
 .eyebrow{font-size:.78rem;letter-spacing:.16em;font-weight:700;text-transform:uppercase;color:#FCD116}
+.domain-title{font-size:1.3rem!important;line-height:1.3!important;color:#006B3F;margin:0 0 .8rem;font-weight:700}
 [data-testid="stMetric"]{background:#FFFFFF;color:#111111;border:1px solid #D9DED9;border-top:5px solid #006B3F;border-radius:14px;padding:1rem}
 [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"]{border-top-color:#FCD116}
 [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"]{border-top-color:#CE1126}
@@ -180,7 +181,7 @@ if page == 'Overview':
         'Biological endpoints, diagnostic pathways, assay validity, confirmatory testing and cross-reactivity.',
         'Numerator–denominator compatibility, assay-specific estimates, composite outcomes and article-outcome reconstruction.']):
         with col.container(border=True):
-            st.subheader(title)
+            st.markdown('<h3 class="domain-title">' + title + '</h3>', unsafe_allow_html=True)
             st.write(body)
     st.info('Primary objective: develop and prospectively refine DARE-Arbo using the article-outcome as the unit of appraisal. Primary endpoint: inter-assessor agreement on criterion ratings.')
     st.subheader('A collaborative study')
@@ -189,10 +190,14 @@ if page == 'Overview':
         st.image(str(ROOT / 'Logo.jpeg'), width=110)
         st.write('**Global Health and Infectious Disease Research Group**')
         st.caption('Kumasi Centre for Collaborative Research in Tropical Medicine')
+        st.write('GHID advances One Health research on the connections between humans, animals and the environment. The group combines epidemiology, clinical and laboratory science, and implementation research to improve disease prevention, diagnosis and treatment. It also trains scientists and health professionals and connects research evidence with policy and public health action.')
+        st.link_button('Learn about GHID at KCCR ↗', 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/')
     with c2:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
-        st.caption('Framework development collaboration')
+        st.write('**ADVANCING COLLABORATIVE SCIENCE & INNOVATION**')
+        st.link_button('SYNERGY-NGS LinkedIn admin dashboard ↗', 'https://www.linkedin.com/company/129253938/admin/dashboard/')
+        st.caption('The supplied LinkedIn dashboard link requires page administrator access.')
 
 elif page == 'Framework & methods':
     st.title('Framework & methods')
@@ -218,6 +223,12 @@ elif page == 'Framework & methods':
     figure('primary_endpoint_defining_assay_pathway.png', 'Primary endpoint-defining assay pathway')
     st.header('DARE-Arbo workflow')
     figure('DARE_Arbo_workflow.png', 'DARE-Arbo appraisal workflow')
+    st.header('From literature findings to appraisal constructs')
+    st.write('Translation of primary-literature findings into DARE-Arbo domains and appraisal constructs.')
+    translation_rows = json.loads((ROOT / 'translation_data.json').read_text(encoding='utf-8'))
+    with st.expander('Read the translation table', expanded=True):
+        st.table(translation_rows)
+    st.download_button('Download Translation workbook', (ROOT / 'Translation.xlsx').read_bytes(), file_name='Translation.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key='translation_workbook')
 
 elif page == 'Team':
     st.title('Meet the study team')
@@ -236,6 +247,8 @@ elif page == 'Team':
         'Anthony Afum-Adjei Awuah': 'Anthony_A_A_Awuah.png',
         'Christian Obirikorang': 'Christian_Obirikorang.png',
         'Evans Asamoah Adu': 'Evans_Asamoah_Adu.png',
+        'Afolabi Owoloye': 'Afolabi_Owoloye.png',
+        'Natalia Shakela': 'Natalia_Shakela.png',
     }
     featured = [m for m in members if m['name'] in portraits]
     for offset in range(0, len(featured), 2):
