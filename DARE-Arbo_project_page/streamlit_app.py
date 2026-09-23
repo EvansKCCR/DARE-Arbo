@@ -61,20 +61,33 @@ def translation_table(workbook_path):
 def documents():
     st.header('Project documents')
     st.subheader('Public project documents')
-    st.caption('Available to all visitors. No sign-in required.')
-    public_files = [
-        ('Framework development protocol', 'DARE-Arbo_framework_development.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-        ('Updated project Gantt schedule', 'DARE-Arbo_Project_Gantt_Updated_Sep2026-May2027.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-    ]
-    for label, filename, mime in public_files:
-        with st.container(border=True):
-            st.write('**' + label + '**')
-            st.download_button('Download ' + label.lower(), (ROOT / filename).read_bytes(), file_name=filename, mime=mime, key='public_' + filename)
+    st.caption('Read online without signing in. Source-file downloads are not offered in this public section.')
     with st.expander('Read the framework development protocol online'):
         from public_protocol import protocol_sections
         for section in protocol_sections():
             st.subheader(section['title'])
             st.html(section['html'])
+    with st.expander('Read the project Gantt schedule online'):
+        from openpyxl import load_workbook
+        schedule_path = ROOT / 'DARE-Arbo_Project_Gantt_Updated_Sep2026-May2027.xlsx'
+        if schedule_path.is_file():
+            workbook = load_workbook(schedule_path, data_only=True)
+            try:
+                schedule = []
+                for row in workbook['Activity Register'].iter_rows(min_row=4, max_col=9, values_only=True):
+                    if not row[2]:
+                        continue
+                    schedule.append({
+                        'Phase': row[1], 'Activity': row[2], 'Output / milestone': row[3],
+                        'Start': row[4].strftime('%d %b %Y'), 'End': row[5].strftime('%d %b %Y'),
+                        'Duration (days)': row[6], 'Owner': row[7], 'Recorded status': row[8],
+                    })
+                st.caption('January 2026–May 2027 · Dates and statuses from the updated project activity register.')
+                st.table(schedule)
+            finally:
+                workbook.close()
+        else:
+            st.info('The project schedule is currently unavailable.')
     st.divider()
     st.subheader('Collaborator library')
     st.write('A shared library for approved collaborators. Full access is required to browse, upload or download study documents.')
