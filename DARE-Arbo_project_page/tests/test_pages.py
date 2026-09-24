@@ -36,7 +36,8 @@ class PageTests(unittest.TestCase):
                 self.assertEqual(len(app.dataframe[0].value), 6)
         self.assertTrue(any('approved Google account' in x.value for x in app.info))
         self.assertFalse(app.get('file_uploader'))
-        self.assertEqual(len(app.get('download_button')), 2)
+        self.assertFalse(app.get('download_button'))
+        self.assertEqual(len(app.table[0].value), 20)
 
     def test_signed_in_visitor_cannot_access_library(self):
         class User(dict):
@@ -48,7 +49,7 @@ class PageTests(unittest.TestCase):
             app.sidebar.radio[0].set_value('Project documents').run()
             self.assertFalse(app.exception)
             self.assertFalse(app.get('file_uploader'))
-            self.assertEqual(len(app.get('download_button')), 2)
+            self.assertFalse(app.get('download_button'))
 
 
 if __name__ == '__main__': unittest.main()

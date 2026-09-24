@@ -183,7 +183,7 @@ with st.sidebar:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width='stretch')
     st.markdown('### DARE-Arbo')
     st.caption('Study & collaboration portal')
-    page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents'], label_visibility='collapsed')
+    page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents', 'Feedback'], label_visibility='collapsed')
     st.divider()
     config = settings()
     if getattr(st.user, 'is_logged_in', False):
@@ -329,6 +329,9 @@ elif page == 'Collaborate':
         st.markdown('- Independently appraise selected article-outcomes\n- Review criteria, the scoring codebook and decision rules\n- Assess clarity, relevance and applicability\n- Identify ambiguous criteria and implementation challenges\n- Contribute to disagreement audits and refinement\n- Review the manuscript or supplementary materials, where applicable')
     st.markdown((ROOT / 'participation.md').read_text(encoding='utf-8'))
 
+elif page == 'Feedback':
+    from feedback import show_feedback
+    show_feedback(settings, create_service)
 else:
     documents()
 
