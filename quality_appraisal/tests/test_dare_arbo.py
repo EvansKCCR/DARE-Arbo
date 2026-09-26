@@ -1317,7 +1317,9 @@ class StreamlitSmokeTests(unittest.TestCase):
         labels = [element.value for element in self.app.subheader]
         self.assertIn("1. Define the extracted endpoint", labels)
         self.assertIn("4. Review and export", labels)
+        self.assertIn("Comments and feedback", labels)
         self.assertIn("Assessor ID", [element.label for element in self.app.text_input])
+        self.assertIn("Comments or query", [element.label for element in self.app.text_area])
         self.assertTrue(self.app.session_state["assessment_started_at_utc"])
         self.assertEqual(self.app.session_state["assessment_completed_at_utc"], "")
         save_button = next(

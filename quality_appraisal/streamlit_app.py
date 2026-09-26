@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import quote
 
 import altair as alt
 import pandas as pd
@@ -78,6 +79,7 @@ from dare_arbo import (
 
 
 APP_DIR = Path(__file__).resolve().parent
+CONTACT_EMAIL = "evansasamoahadu@gmail.com"
 LOGO_PATH = APP_DIR / "Logo.jpeg"
 SYNERGY_LOGO_PATH = APP_DIR / "Synergy_NGS2025.png"
 DARE_BANNER_PATH = APP_DIR / "DARE_Arbo_brand_banner.png"
@@ -778,6 +780,12 @@ def sidebar() -> str:
             key="reset_page_background",
         )
         st.caption("The sidebar and presentation-export colors remain independent.")
+    with st.sidebar.expander("Comments & support", expanded=False):
+        st.markdown(
+            f"Questions or technical queries:  \n"
+            f"[{CONTACT_EMAIL}](mailto:{CONTACT_EMAIL})"
+        )
+        st.caption("A detailed feedback form is available at the bottom of every page.")
     st.sidebar.markdown("---")
     st.sidebar.caption("The total is a continuous methodological-quality score. DARE-Arbo does not impose low/moderate/high bands.")
     st.sidebar.caption(GUIDE_VERSION)
@@ -3630,6 +3638,72 @@ def about_page() -> None:
     st.caption(f"Framework source: {GUIDE_VERSION}")
 
 
+def feedback_panel(page: str) -> None:
+    """Create a user-reviewed email draft without persisting feedback in the app."""
+    st.markdown("---")
+    st.subheader("Comments and feedback")
+    st.markdown(
+        f"Report a problem, suggest an improvement, or ask a methodological or technical "
+        f"question. Queries are directed to [{CONTACT_EMAIL}](mailto:{CONTACT_EMAIL})."
+    )
+    with st.expander(
+        "Write a comment, feedback message, or query",
+        expanded=page == "About & deployment",
+    ):
+        feedback_category = st.selectbox(
+            "Feedback category",
+            (
+                "General feedback",
+                "Scoring or methodological query",
+                "Technical problem",
+                "Feature request",
+                "Data privacy or deployment query",
+            ),
+            key=f"feedback_category_{page}",
+        )
+        feedback_subject = st.text_input(
+            "Feedback subject",
+            placeholder="Briefly describe the topic",
+            key=f"feedback_subject_{page}",
+        )
+        feedback_message = st.text_area(
+            "Comments or query",
+            placeholder=(
+                "Describe what you were doing, what happened, and what improvement or "
+                "clarification would help. Do not include confidential article content."
+            ),
+            height=140,
+            max_chars=4000,
+            key=f"feedback_message_{page}",
+        )
+        subject = feedback_subject.strip() or f"DARE-Arbo — {feedback_category}"
+        body_lines = [
+            feedback_message.strip() or "Please enter your comment or query here.",
+            "",
+            "DARE-Arbo context",
+            f"Page: {page}",
+            f"Framework: {GUIDE_VERSION}",
+        ]
+        mailto_url = (
+            f"mailto:{CONTACT_EMAIL}?subject={quote(subject)}"
+            f"&body={quote(chr(10).join(body_lines))}"
+        )
+        st.link_button(
+            "Open email draft",
+            mailto_url,
+            type="primary",
+            use_container_width=True,
+            help=(
+                "Opens your default email application with the recipient, subject, and "
+                "message prefilled. Review the email before sending."
+            ),
+        )
+        st.caption(
+            "The app does not submit or store this text. Your default email application "
+            "opens a draft addressed to the project contact, and you decide whether to send it."
+        )
+
+
 def main() -> None:
     configure_page()
     initialize_state()
@@ -3644,6 +3718,7 @@ def main() -> None:
         framework_page()
     else:
         about_page()
+    feedback_panel(page)
 
 
 if __name__ == "__main__":
