@@ -26,10 +26,6 @@ streamlit run streamlit_app.py
 
 The legacy entry points `risk_bias_assesor.py` and `risk_of_bias_scoring.py` now open the same consolidated application.
 
-## Streamlit Cloud deployment
-
-Deploy `quality_appraisal/streamlit_app.py` and keep `quality_appraisal/dare_arbo.py` in the same repository directory. These two files form a versioned interface/core pair and must be committed and deployed together. After updating either file, reboot the Streamlit Cloud app so its Python process cannot retain an older imported core module. The current compatible core API is `2026.09.11.1`; a mismatched deployment now shows an explicit synchronization message instead of an opaque import failure.
-
 ## Designer report architecture
 
 The Designer report keeps planning logic and presentation separate:
