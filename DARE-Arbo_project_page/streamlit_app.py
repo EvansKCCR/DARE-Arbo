@@ -180,9 +180,13 @@ st.markdown('''<style>
 [data-testid="stSidebar"] button{background:#251116;color:#FFFFFF;border-color:#B76470}
 [data-testid="stSidebar"] button:hover{background:#A51D32;border-color:#FFFFFF;color:#FFFFFF}
 [data-testid="stSidebar"] [role="radio"][aria-checked="true"]{background:#CE1126}
-[data-testid="stHeading"] h1,[data-testid="stHeading"] h2,[data-testid="stHeading"] h3{color:#006B3F}
-[data-testid="stAlertContainer"]{background:#FFF8D6;color:#111111;border-left:4px solid #FCD116}
-[data-testid="stAlertContainer"] a{color:#004D2D}
+[data-testid="stHeading"] h1,[data-testid="stHeading"] h2,[data-testid="stHeading"] h3{color:#164C3B}
+[data-testid="stMain"] [data-testid="stExpander"]{border-color:#CFDED6;border-radius:12px;overflow:hidden}
+[data-testid="stMain"] [data-testid="stExpander"] summary{background:#EDF4F0;color:#164C3B}
+[data-testid="stMain"] [data-testid="stExpander"] summary:hover{background:#DFECE4}
+[data-testid="stMain"] [data-testid="stTable"] th{background:#E3EEE7;color:#164C3B;border-bottom:2px solid #80A995}
+[data-testid="stAlertContainer"]{background:#EDF4F0;color:#203C31;border-left:4px solid #43866B}
+[data-testid="stAlertContainer"] a{color:#164C3B}
 a:focus-visible,button:focus-visible{outline:3px solid #CE1126;outline-offset:3px}
 @media(max-width:640px){.hero{padding:1.5rem}.hero h1{font-size:2.3rem}}
 </style>''', unsafe_allow_html=True)
