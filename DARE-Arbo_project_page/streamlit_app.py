@@ -284,7 +284,7 @@ elif page == 'Framework & methods':
 elif page == 'Team':
     st.title('Meet the study team')
     st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
-    st.caption('Profiles reflect the names, positions, affiliations and experience listed in the project workbook.')
+    st.caption('Profiles reflect the names, positions, affiliations and experiences of each team member on the project.')
     query = st.text_input('Find a team member', placeholder='Search by name, expertise or institution')
     affiliations = sorted({m['affiliation'] for m in STUDY['team']})
     institution = st.selectbox('Affiliation', ['All affiliations'] + affiliations)
