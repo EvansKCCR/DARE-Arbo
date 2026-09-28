@@ -228,7 +228,7 @@ if page == 'Overview':
     for col, title, body in zip(st.columns(3), ['Study design', 'Assay design', 'Outcome reporting'], [
         'Surveillance purpose, population representation, sampling-frame coverage and participant or specimen selection.',
         'Biological endpoints, diagnostic pathways, assay validity, confirmatory testing and cross-reactivity.',
-        'Numerator–denominator compatibility, assay-specific estimates, composite outcomes and article-outcome reconstruction.']):
+        'Numerator–denominator compatibility, assay-specific estimates, and article-outcome reconstruction.']):
         with col.container(border=True):
             st.markdown('<h3 class="domain-title">' + title + '</h3>', unsafe_allow_html=True)
             st.write(body)
