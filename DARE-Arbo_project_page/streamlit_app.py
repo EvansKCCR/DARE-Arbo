@@ -232,7 +232,7 @@ if page == 'Overview':
     for col, title, body in zip(st.columns(3), ['Study design', 'Assay design', 'Outcome reporting'], [
         'Surveillance purpose, population representation, sampling-frame coverage and participant or specimen selection.',
         'Biological endpoints, diagnostic pathways, assay validity, confirmatory testing and cross-reactivity.',
-        'Numerator–denominator compatibility, assay-specific estimates, composite outcomes and article-outcome reconstruction.']):
+        'Numerator–denominator compatibility, assay-specific estimates and article-outcome reconstruction.']):
         with col.container(border=True):
             st.markdown('<h3 class="domain-title">' + title + '</h3>', unsafe_allow_html=True)
             st.write(body)
@@ -243,12 +243,11 @@ if page == 'Overview':
         st.image(str(ROOT / 'Logo.jpeg'), width=110)
         st.write('**Global Health and Infectious Disease Research Group**')
         st.caption('Kumasi Centre for Collaborative Research in Tropical Medicine')
-        st.write('GHID advances One Health research on the connections between humans, animals and the environment. The group combines epidemiology, clinical and laboratory science, and implementation research to improve disease prevention, diagnosis and treatment. It also trains scientists and health professionals and connects research evidence with policy and public health action.')
         st.link_button('Learn about GHID at KCCR ↗', 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/')
     with c2:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
-        st.write('**ADVANCING COLLABORATIVE SCIENCE & INNOVATION**')
+        st.caption('Scientific Young Investigator Network Emerging from Novartis Next Generation Scientist 2025')
         st.link_button('SYNERGY-NGS-2025 on LinkedIn ↗', 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true')
 
 elif page == 'Framework & methods':
