@@ -14,7 +14,7 @@ def show_project_management(settings, identity, allowed):
     cfg = settings().get('project_management', {})
     admins = lambda: cfg.get('admin_emails', ['evansasamoahadu@gmail.com'])
     if not cfg.get('database_url'):
-        st.info('Task management is awaiting database setup. The administrator can follow PROJECT_MANAGEMENT.md to connect persistent storage and reminders.')
+        st.info('Task management is awaiting database setup.')
         return
     db = Database(cfg['database_url'])
     store = TaskStore(db, identity, allowed, admins)
