@@ -228,7 +228,7 @@ if page == 'Overview':
     for col, title, body in zip(st.columns(3), ['Study design', 'Assay design', 'Outcome reporting'], [
         'Surveillance purpose, population representation, sampling-frame coverage and participant or specimen selection.',
         'Biological endpoints, diagnostic pathways, assay validity, confirmatory testing and cross-reactivity.',
-        'Numerator–denominator compatibility, assay-specific estimates, and article-outcome reconstruction.']):
+        'Numerator–denominator compatibility, assay-specific estimates, composite outcomes and article-outcome reconstruction.']):
         with col.container(border=True):
             st.markdown('<h3 class="domain-title">' + title + '</h3>', unsafe_allow_html=True)
             st.write(body)
@@ -239,11 +239,12 @@ if page == 'Overview':
         st.image(str(ROOT / 'Logo.jpeg'), width=110)
         st.write('**Global Health and Infectious Disease Research Group**')
         st.caption('Kumasi Centre for Collaborative Research in Tropical Medicine')
+        st.write('GHID advances One Health research on the connections between humans, animals and the environment. The group combines epidemiology, clinical and laboratory science, and implementation research to improve disease prevention, diagnosis and treatment. It also trains scientists and health professionals and connects research evidence with policy and public health action.')
         st.link_button('Learn about GHID at KCCR ↗', 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/')
     with c2:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
-        st.caption('Scientific Young-investigator Network Emerging from Novartis NGS 2025')
+        st.write('**ADVANCING COLLABORATIVE SCIENCE & INNOVATION**')
         st.link_button('SYNERGY-NGS-2025 on LinkedIn ↗', 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true')
 
 elif page == 'Framework & methods':
@@ -266,10 +267,20 @@ elif page == 'Framework & methods':
     with st.expander('Ethics and dissemination'):
         st.write('The protocol evaluates published reports and does not involve recruitment of human participants or collection of identifiable participant-level data. Materials will be disseminated with the methodology paper, subject to repository, licensing and copyright requirements.')
     st.link_button('Related systematic review protocol ↗', 'https://doi.org/10.1186/s13643-025-02879-z')
-    st.header('Primary endpoint-defining assay pathway')
-    figure('primary_endpoint_defining_assay_pathway.png', 'Primary endpoint-defining assay pathway')
-    st.header('DARE-Arbo workflow')
-    figure('DARE_Arbo_workflow.png', 'DARE-Arbo appraisal workflow')
+    st.header('Interactive endpoint workflow')
+    st.write('Select a workflow step to explore its rules, then answer the pathway questions to see the endpoint-specific decision output. Scroll within the interactive panel to explore all sections.')
+    workflow_path = ROOT / 'DARE-Arbo_interactive_endpoint_workflow.html'
+    if workflow_path.is_file():
+        # An iframe runs the supplied interaction scripts and isolates its styles.
+        workflow_html = workflow_path.read_text(encoding='utf-8-sig')
+        if hasattr(st, 'iframe'):
+            st.iframe(workflow_html, height=900)
+        else:
+            # Compatibility with older supported Streamlit deployments.
+            import streamlit.components.v1 as components
+            components.html(workflow_html, height=900, scrolling=True)
+    else:
+        st.info('The interactive endpoint workflow is currently unavailable. The project administrator needs to include DARE-Arbo_interactive_endpoint_workflow.html in this deployment.')
     st.header('From literature findings to appraisal constructs')
     st.write('Translation of primary-literature findings into DARE-Arbo domains and appraisal constructs.')
     translation_path = ROOT / 'Translation.xlsx'
@@ -283,7 +294,7 @@ elif page == 'Framework & methods':
 elif page == 'Team':
     st.title('Meet the study team')
     st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
-    st.caption('Profiles reflect the names, positions, affiliations and experiences of each team member on the project.')
+    st.caption('Profiles reflect the names, positions, affiliations and experience listed in the project workbook.')
     query = st.text_input('Find a team member', placeholder='Search by name, expertise or institution')
     affiliations = sorted({m['affiliation'] for m in STUDY['team']})
     institution = st.selectbox('Affiliation', ['All affiliations'] + affiliations)

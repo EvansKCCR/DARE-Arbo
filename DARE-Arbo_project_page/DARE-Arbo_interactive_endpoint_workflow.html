@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DARE-Arbo Endpoint-First Interactive Decision Figure</title>
+<style>
+:root{--navy:#217e80;--blue:#257eb6;--teal:#0f6f78;--green:#2e7d32;--orange:#e56b2f;--purple:#9c278f;--red:#b42318;--ink:#17202a;--muted:#5f6b76;--line:#cfd8e3;--bg:#f4f7fb;--white:#fff}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--ink)}
+header{background:linear-gradient(120deg,var(--navy),#0b6785);color:#fff;padding:24px 28px} header h1{margin:0 0 6px;font-size:28px} header p{margin:0;max-width:1050px;line-height:1.45}
+main{max-width:1440px;margin:auto;padding:20px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:var(--navy);color:#fff}.btn.secondary{background:#607080}.btn.warn{background:var(--orange)}
+.panel{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 16px #153d6312;margin-bottom:18px}.panel h2{margin:0;padding:16px 18px;border-bottom:1px solid var(--line);color:var(--navy);font-size:21px}.panel-body{padding:18px}
+.workflow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.step{border:2px solid var(--blue);border-radius:12px;padding:14px;background:#fff;cursor:pointer;min-height:130px;position:relative}.step.active{background:#eaf6ff;box-shadow:0 0 0 3px #0877bd33}.step.complete{border-color:var(--green)}.step .n{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy);color:#fff;font-weight:800;margin-right:7px}.step h3{display:inline;font-size:17px;color:var(--navy)}.step p{font-size:14px;color:var(--muted);line-height:1.35}.step small{position:absolute;bottom:10px;left:14px;color:var(--teal);font-weight:700}
+.grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.question{padding:14px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px}.question strong{display:block;margin-bottom:8px;color:var(--navy)}label{display:block;margin:7px 0;cursor:pointer}.result{border-left:6px solid var(--blue);background:#eef7ff;padding:16px;border-radius:8px;min-height:180px}.result h3{margin-top:0;color:var(--navy)}.pill{display:inline-block;padding:5px 9px;border-radius:99px;margin:3px 5px 3px 0;background:#dceaf7;color:var(--navy);font-weight:700;font-size:12px}.danger{background:#fff0ef;color:var(--red)}.good{background:#eaf6eb;color:var(--green)}
+.logic{display:flex;align-items:stretch;gap:8px;overflow:auto;padding-bottom:5px}.node{min-width:175px;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff}.node b{color:var(--navy)}.arrow{align-self:center;font-size:24px;color:var(--blue)}
+.audit{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{border:1px solid var(--line);border-top:5px solid var(--orange);border-radius:10px;padding:14px}.card h3{margin:0 0 8px;color:var(--navy);font-size:17px}.card p,.card li{font-size:14px;line-height:1.4}.card.green{border-top-color:var(--green)}.card.red{border-top-color:var(--red)}
+.hidden{display:none}.source{font-size:13px;color:var(--muted)}.definition{padding:12px;background:#f7fafc;border-radius:8px;margin-top:10px}.footer-note{font-size:12px;color:var(--muted);margin-top:10px}
+@media(max-width:950px){.workflow{grid-template-columns:repeat(2,1fr)}.grid2,.audit{grid-template-columns:1fr}}@media(max-width:560px){.workflow{grid-template-columns:1fr}}
+@media print{.toolbar{display:none}.panel{break-inside:avoid;box-shadow:none}body{background:#fff}}
+</style></head>
+<body><header><h1>DARE-Arbo endpoint-first implementation</h1><p>An interactive figure that separates endpoint identity, endpoint structure, measurement pathway, confirmation role, confirmation coverage, numerator/denominator linkage, and endpoint-specific scoring.</p></header>
+<main>
+<div class="toolbar"><button class="btn" onclick="resetAll()">Reset</button><button class="btn secondary" onclick="window.print()">Print / save PDF</button><button class="btn warn" onclick="downloadJSON()">Export decisions</button></div>
+<section class="panel"><h2>A. Endpoint-first workflow</h2><div class="panel-body"><div class="workflow" id="workflow"></div><div id="stepDetail" class="definition">Select a step to view its implementation rule and guardrail.</div></div></section>
+<section class="panel"><h2>B. Primary assay versus confirmatory pathway decision logic</h2><div class="panel-body grid2"><div id="questions"></div><div class="result" id="result"><h3>Decision output</h3><p>Answer the questions in order. The figure will assign the endpoint structure, assay role, pathway, confirmation status, denominator rule, and score anchors.</p></div></div></section>
+<section class="panel"><h2>C. Orthogonal data model</h2><div class="panel-body"><div class="logic"><div class="node"><b>Endpoint identity</b><br>IgG/total Ab, IgM, NS1, direct detection, neutralization, mixed/other</div><div class="arrow">→</div><div class="node"><b>Endpoint structure</b><br>Single assay, staged algorithm, unresolved</div><div class="arrow">→</div><div class="node"><b>Measurement pathway</b><br>Population, representative subsample, selected subsample, unresolved</div><div class="arrow">→</div><div class="node"><b>Confirmation role</b><br>None, supporting, endpoint-defining stage, separate endpoint, unresolved</div><div class="arrow">→</div><div class="node"><b>Coverage</b><br>Complete, representative subset, selected/mixed, unresolved</div><div class="arrow">→</div><div class="node"><b>Observed n/N</b><br>Same virus, endpoint, population, time, and pathway</div><div class="arrow">→</div><div class="node"><b>Scoring</b><br>Q5–Q10 for this endpoint only</div></div></div></section>
+</div></section>
+<p class="source">Source basis: Appendix 3, “General Application Principles for DARE-Arbo Assessment and Appraisal.” This figure is an implementation aid, not a replacement for the full scoring manual.</p>
+</main>
+<script>
+const steps=[
+['Define record key','Create one record per virus × endpoint × materially different population/pathway; split materially distinct time points.','Do not let one article-level record merge incompatible denominators.'],
+['Name biological endpoint','Classify the observed result entering the numerator: IgG/total Ab, IgM, NS1, direct detection, neutralization, or mixed/other.','Do not classify from the title, clinical label, or most sophisticated assay mentioned.'],
+['Verify observed numerator','Capture the integer positive count and its biological meaning.','Do not back-calculate integer events from a rounded prevalence.'],
+['Trace the numerator','Identify the assay result or prespecified algorithm that makes a participant positive.','For staged pathways, store the screen and all required downstream stages separately.'],
+['Classify endpoint structure','Choose single assay, staged algorithm, or unresolved.','A later optional verification test does not make the primary endpoint staged.'],
+['Link eligible denominator','Use participants eligible for and actually classified by the endpoint-defining assay/algorithm.','Match virus, endpoint, time, population, and measurement pathway.'],
+['Classify measurement pathway','Population, representative subsample, selected subsample, or unresolved.','This axis is independent of assay validity and confirmation tier.'],
+['Classify later assays','Assign none, supporting confirmation, endpoint-defining stage, separate endpoint, or unresolved.','A method may create a separate endpoint and also support Q6c only if linkage is explicit.'],
+['Assign coverage or tier','Coverage: complete, representative subset, selected/mixed, unresolved. Tag A–E only for direct-detection/neutralization conventions.','Tier A is a primary-endpoint tag, not confirmation coverage.'],
+['Validate n/N and score','Apply PASS/REVIEW/BLOCK, then score Q5–Q10 for this endpoint.','Q6a/Q6b follow the numerator-producing assay/algorithm; Q6c follows independent confirmation.']];
+const wf=document.getElementById('workflow');steps.forEach((s,i)=>{let d=document.createElement('div');d.className='step';d.innerHTML=`<span class="n">${i+1}</span><h3>${s[0]}</h3><p>${s[1]}</p><small>Click for guardrail</small>`;d.onclick=()=>{document.querySelectorAll('.step').forEach(x=>x.classList.remove('active'));d.classList.add('active');document.getElementById('stepDetail').innerHTML=`<b>${s[0]}</b><br>${s[1]}<br><span style="color:#b42318"><b>Guardrail:</b> ${s[2]}</span>`};wf.appendChild(d)});
+const qs=[
+['q1','Can an observed integer numerator be linked to a biological result and tested population?',['Yes','No']],
+['q2','Does the later assay have its own distinct eligible numerator and tested denominator?',['Yes','No','No later assay']],
+['q3','Does one assay result directly create the current numerator without a required downstream stage?',['Yes','No','Unclear']],
+['q4','Is current positivity explicitly defined by a prespecified screen-plus-confirmation rule?',['Yes','No','Unclear']],
+['q5','Who received the endpoint-defining assay or complete algorithm?',['Complete eligible population','Predefined representative/random subsample','Selected/mixed subsample','Unresolved']],
+['q6','For any later assay, what is its role for the current endpoint?',['Supporting only','Required endpoint-defining stage','Separate endpoint only','Unlinked/unresolved','None']],
+['q7','If confirmation is required or assessed, what is its coverage?',['Complete required set','Representative/random subset','Selected/mixed subset','Unresolved','Not applicable']]
+];
+const qbox=document.getElementById('questions');qs.forEach(q=>{let x=document.createElement('div');x.className='question';x.innerHTML=`<strong>${q[1]}</strong>`+q[2].map(v=>`<label><input type="radio" name="${q[0]}" value="${v}" onchange="evaluateLogic()"> ${v}</label>`).join('');qbox.appendChild(x)});
+function val(n){let e=document.querySelector(`input[name=${n}]:checked`);return e?e.value:null}
+function evaluateLogic(){let a=Object.fromEntries(qs.map(q=>[q[0],val(q[0])]));let out=[],status='REVIEW',cls='danger';
+if(a.q1==='No'){out=['UNRESOLVED_ENDPOINT','No count-based extraction','Q8 = 0','Adjudication required'];status='BLOCK'}
+else if(a.q1==='Yes'){
+ if(a.q2==='Yes') out.push('CREATE_SEPARATE_ENDPOINT_RECORD');
+ if(a.q4==='Yes'){out.push('STAGED_ALGORITHM','Final algorithm-positive n / all entrants, only if all required stages complete');}
+ else if(a.q3==='Yes'){out.push('SINGLE_ASSAY_ENDPOINT','Assay-positive n / assay-tested N');}
+ else out.push('ENDPOINT_STRUCTURE_UNRESOLVED');
+ if(a.q5) out.push('Measurement pathway: '+a.q5);
+ if(a.q6) out.push('Confirmation role: '+a.q6);
+ if(a.q7) out.push('Confirmation coverage: '+a.q7);
+ const directNote='If direct detection or neutralization itself creates the numerator, add TIER_A_PRIMARY_ENDPOINT; do not call this confirmation.';out.push(directNote);
+ if(a.q4==='Yes'&&a.q7==='Complete required set'){out.push('TIER_B tag when the staged endpoint is direct detection or neutralization');}
+ if(a.q7==='Representative/random subset')out.push('TIER_C_VERIFICATION: raw n/N uses verified subset');
+ if(a.q7==='Selected/mixed subset')out.push('TIER_D_SELECTED_VERIFICATION: no unrestricted prevalence');
+ if(a.q7==='Unresolved')out.push('TIER_E_UNRESOLVED: no confirmation-based prevalence');
+ if(a.q3==='Yes'||(a.q4==='Yes'&&a.q7==='Complete required set')){status='PASS';cls='good'}
+}
+document.getElementById('result').innerHTML=`<h3>Decision output <span class="pill ${cls}">${status}</span></h3>`+out.map(x=>`<div class="pill">${x}</div>`).join('')+`<div class="definition"><b>Score anchors</b><br>Q6a/Q6b: numerator-producing assay or complete algorithm.<br>Q6c: independent linked confirmation only.<br>Q7: consistency of the endpoint-defining procedure.<br>Q8: observed, matched n/N.</div>`;localStorage.setItem('dareArboDecisions',JSON.stringify(a));}
+function resetAll(){document.querySelectorAll('input[type=radio]').forEach(x=>x.checked=false);localStorage.removeItem('dareArboDecisions');document.getElementById('result').innerHTML='<h3>Decision output</h3><p>Answer the questions in order.</p>';document.querySelectorAll('.step').forEach(x=>x.classList.remove('active'))}
+function downloadJSON(){let data=localStorage.getItem('dareArboDecisions')||'{}';let b=new Blob([data],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='DARE-Arbo_endpoint_decisions.json';a.click();URL.revokeObjectURL(u)}
+</script></body></html>
