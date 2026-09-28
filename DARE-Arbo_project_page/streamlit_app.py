@@ -1,6 +1,8 @@
 """DARE-Arbo study website and restricted collaborator document library."""
 from datetime import date
 from pathlib import Path
+from base64 import b64encode
+from html import escape
 import logging
 import json
 import streamlit as st
@@ -148,6 +150,16 @@ st.markdown('''<style>
 .hero p{color:#FFFFFF;font-size:1.13rem;max-width:820px;line-height:1.7}
 .eyebrow{font-size:.78rem;letter-spacing:.16em;font-weight:700;text-transform:uppercase;color:#FCD116}
 .domain-title{font-size:1.3rem!important;line-height:1.3!important;color:#006B3F;margin:0 0 .8rem;font-weight:700}
+.team-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;gap:24px;margin:12px 0 28px}
+.team-card{display:flex;flex-direction:column;min-width:0;padding:24px;border:1px solid #D9DED9;border-top:4px solid #006B3F;border-radius:16px;background:#FFFFFF;color:#111111}
+.team-photo{width:100%;height:260px;display:flex;align-items:center;justify-content:center;background:#F4F6F4;border-radius:10px;margin-bottom:20px;overflow:hidden}
+.team-photo img{display:block;width:100%;height:100%;object-fit:contain}
+.team-card h3{font-size:1.35rem;line-height:1.35;min-height:3.65rem;margin:0 0 8px;padding:0;color:#006B3F;overflow-wrap:anywhere}
+.team-role{font-weight:600;line-height:1.5;min-height:3rem;margin:0 0 8px}
+.team-affiliation{font-size:.9rem;line-height:1.5;min-height:2.7rem;margin:0 0 20px;color:#555555}
+.team-expertise{border-top:1px solid #E2E7E2;padding-top:16px;line-height:1.6}
+.team-expertise p{margin:6px 0 0;overflow-wrap:anywhere}
+@media(max-width:640px){.team-grid{grid-template-columns:minmax(0,1fr)}.team-card{padding:20px}}
 [data-testid="stMetric"]{background:#FFFFFF;color:#111111;border:1px solid #D9DED9;border-top:5px solid #006B3F;border-radius:14px;padding:1rem}
 [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"]{border-top-color:#FCD116}
 [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"]{border-top-color:#CE1126}
@@ -272,7 +284,7 @@ elif page == 'Framework & methods':
 elif page == 'Team':
     st.title('Meet the study team')
     st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
-    st.caption('Profiles reflect the names, positions, affiliations, and experience of each team member on the project.')
+    st.caption('Profiles reflect the names, positions, affiliations and experience listed in the project workbook.')
     query = st.text_input('Find a team member', placeholder='Search by name, expertise or institution')
     affiliations = sorted({m['affiliation'] for m in STUDY['team']})
     institution = st.selectbox('Affiliation', ['All affiliations'] + affiliations)
@@ -290,15 +302,22 @@ elif page == 'Team':
         'Natalia Shakela': 'Natalia_Shakela.png',
     }
     featured = [m for m in members if m['name'] in portraits]
-    for offset in range(0, len(featured), 2):
-        for col, member in zip(st.columns(2), featured[offset:offset+2]):
-            with col.container(border=True):
-                st.image(str(ROOT / 'Images' / portraits[member['name']]), width=220)
-                st.subheader(member['name'])
-                st.write('**' + member['position'] + '**')
-                st.caption(member['affiliation'])
-                st.write('**Expertise**')
-                st.write(member['expertise'])
+    cards = []
+    for member in featured:
+        photo = b64encode((ROOT / 'Images' / portraits[member['name']]).read_bytes()).decode('ascii')
+        profile = {key: escape(value) for key, value in member.items()}
+        cards.append(
+            '<article class="team-card">'
+            f'<div class="team-photo"><img src="data:image/png;base64,{photo}" '
+            f'alt="Portrait of {profile["name"]}"></div>'
+            f'<h3>{profile["name"]}</h3>'
+            f'<p class="team-role">{profile["position"]}</p>'
+            f'<p class="team-affiliation">{profile["affiliation"]}</p>'
+            f'<div class="team-expertise"><strong>Expertise</strong><p>{profile["expertise"]}</p></div>'
+            '</article>'
+        )
+    if cards:
+        st.html('<div class="team-grid">' + ''.join(cards) + '</div>')
     remaining = [m for m in members if m['name'] not in portraits]
     if remaining:
         st.subheader('Additional team members')
