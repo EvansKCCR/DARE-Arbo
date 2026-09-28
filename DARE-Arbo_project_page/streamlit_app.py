@@ -239,11 +239,12 @@ if page == 'Overview':
         st.image(str(ROOT / 'Logo.jpeg'), width=110)
         st.write('**Global Health and Infectious Disease Research Group**')
         st.caption('Kumasi Centre for Collaborative Research in Tropical Medicine')
-        st.write('GHID advances One Health research on the connections between humans, animals and the environment. The group combines epidemiology, clinical and laboratory science, and implementation research to improve disease prevention, diagnosis and treatment. It also trains scientists and health professionals and connects research evidence with policy and public health action.')
+        st.write('GHID advances One Health research on the connections between humans, animals and the environment.')
         st.link_button('Learn about GHID at KCCR ↗', 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/')
     with c2:
         st.image(str(ROOT / 'Synergy_NGS2025.png'), width=110)
         st.write('**SYNERGY-NGS-2025**')
+        st.caption('Scientific Young-investigator Network Emerging from Novartis NGS 2025')
         st.write('**ADVANCING COLLABORATIVE SCIENCE & INNOVATION**')
         st.link_button('SYNERGY-NGS-2025 on LinkedIn ↗', 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true')
 
