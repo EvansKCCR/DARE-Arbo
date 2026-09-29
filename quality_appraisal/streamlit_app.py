@@ -3625,7 +3625,7 @@ def about_page() -> None:
     st.subheader("Privacy and deployment")
     st.markdown(
         """
-        The app processes uploaded PDFs in memory and does not persist them by default. For public deployment, use a controlled Streamlit host, HTTPS, an access policy appropriate to the documents being reviewed, and a private storage/database layer only if persistent projects are required.
+        The app processes uploaded PDFs in memory and does not persist them by default.
 
         Local launch:
 
