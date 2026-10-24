@@ -77,6 +77,11 @@ from dare_arbo import (
     score_assessment,
     suggest_scores,
 )
+from document_intelligence import (
+    ENGINE_VERSION as DOCUMENT_ENGINE_VERSION,
+    UNRESOLVED as DOCUMENT_UNRESOLVED,
+    parse_pdf_bundle,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -211,6 +216,21 @@ def prepared_square_logo(logo_bytes: bytes) -> bytes:
 @st.cache_data(show_spinner=False)
 def png_data_uri(image_bytes: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+
+
+@st.cache_data(show_spinner=False)
+def cached_document_model(
+    main_pdf: bytes,
+    main_name: str,
+    supplements: tuple[tuple[str, bytes], ...],
+) -> dict[str, Any]:
+    """Parse a PDF bundle once and cache the serializable shared evidence model."""
+    return parse_pdf_bundle(
+        main_pdf,
+        main_name,
+        supplements,
+        rule_version=GUIDE_VERSION,
+    ).to_dict(include_pages=True)
 
 
 def _safe_ui_text(value: Any, fallback: str = "Not specified") -> str:
@@ -1206,6 +1226,10 @@ def initialize_state() -> None:
         "registry_batch_loaded_count": 0,
         "batch_pdf_hashes": [],
         "batch_pdf_evidence": [],
+        "appraiser_pdf_model": None,
+        "appraiser_pdf_candidate_id": "",
+        "appraiser_pdf_overrides": {},
+        "appraiser_pdf_review_notice": "",
         "single_endpoint": ENDPOINTS[0].key,
         "single_pathway": ENDPOINTS[0].default_pathway,
         "verification_design": "full_population",
@@ -3239,90 +3263,382 @@ def batch_editor() -> pd.DataFrame:
     return st.session_state["batch_grid"]
 
 
+def _pdf_field_value(
+    candidate: dict[str, Any], field_id: str, overrides: dict[str, Any]
+) -> Any:
+    candidate_overrides = overrides.get(candidate["candidate_id"], {})
+    if field_id in candidate_overrides:
+        return candidate_overrides[field_id].get("final_value")
+    return candidate.get("fields", {}).get(field_id, {}).get("final_value")
+
+
+def _evidence_location_text(item: dict[str, Any]) -> str:
+    location = item.get("location") or {}
+    if not location:
+        return "No source location"
+    return " · ".join(
+        value for value in (
+            str(location.get("document") or ""),
+            str(location.get("section") or ""),
+            f"p. {location.get('page')}" if location.get("page") else "",
+        ) if value
+    )
+
+
+def _pdf_candidate_to_batch_row(
+    model: dict[str, Any], candidate: dict[str, Any], overrides: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Map a reviewed shared-evidence candidate into one editable Appraiser row."""
+    endpoint_key = candidate["endpoint_key"]
+    synthesis_path_key = candidate.get("synthesis_path_key") or "serology_apparent"
+    if synthesis_path_key not in SYNTHESIS_PATHS_BY_KEY:
+        synthesis_path_key = "serology_apparent"
+    synthesis_path = SYNTHESIS_PATHS_BY_KEY[synthesis_path_key]
+    pathway = ENDPOINTS_BY_KEY[endpoint_key].default_pathway
+    field = lambda name: _pdf_field_value(candidate, name, overrides)
+    clean = lambda value: "" if value in (None, DOCUMENT_UNRESOLVED) else value
+    pages = model.get("pages", [])
+    target = clean(field("target_population"))
+    frame = clean(field("sampling_frame"))
+    recruitment_parts = [
+        clean(field("site_selection")),
+        clean(field("participant_selection")),
+        clean(field("laboratory_subsampling")),
+    ]
+    recruitment = " → ".join(str(value) for value in recruitment_parts if value)
+    primary_assay = str(clean(field("primary_assay")))
+    confirmatory_assay = field("confirmatory_assay")
+    if isinstance(confirmatory_assay, list):
+        confirmatory_assay = "; ".join(confirmatory_assay)
+    confirmatory_assay = str(clean(confirmatory_assay))
+    counts: dict[str, Any] = {}
+    denominator = field("denominator")
+    numerator = field("numerator")
+    if isinstance(denominator, int):
+        counts["total_tested_n"] = denominator
+    numerator_field = {
+        "prior_exposure": "primary_positive_n",
+        "presumptive_igm": "igm_positive_n",
+        "presumptive_ns1": "ns1_positive_n",
+        "neutralizing_antibody": "neutralization_positive_n",
+        "confirmed_active": "molecular_positive_n",
+    }.get(endpoint_key)
+    if numerator_field and isinstance(numerator, int):
+        counts[numerator_field] = numerator
+    draft = suggest_scores(
+        pages,
+        pathway,
+        endpoint_key,
+        synthesis_path.verification_design,
+        synthesis_path_key=synthesis_path_key,
+        counts=counts,
+        target_population=str(target),
+        target_population_category=str(target),
+        sampling_frame_description=str(frame),
+        sampling_frame_category=str(frame),
+        sampling_recruitment_method=recruitment,
+        primary_assay=primary_assay,
+        confirmatory_assay=confirmatory_assay,
+    )
+    row = empty_batch_row()
+    main_source = next((source for source in model.get("sources", []) if source.get("kind") == "main"), model.get("sources", [{}])[0])
+    identifier = extract_citation_or_doi(pages, main_source.get("metadata"))
+    row.update(
+        {
+            "Study ID": f"{Path(str(main_source.get('name') or 'article')).stem} · {candidate['virus']} · {candidate['endpoint_label']}",
+            "Citation or DOI": identifier.get("value", ""),
+            "Virus": candidate["virus"],
+            "Target population": str(target),
+            "Target-population category": str(target),
+            "Sampling frame / source population": str(frame),
+            "Sampling-frame category": str(frame),
+            "Sampling/recruitment method": recruitment,
+            "Primary assay": primary_assay,
+            "Confirmatory assay": confirmatory_assay,
+            "Confirmation role": str(clean(field("confirmation_role"))),
+            "Confirmation coverage": str(clean(field("confirmation_coverage"))),
+            "Synthesis path": SYNTHESIS_PATH_LABELS_BY_KEY[synthesis_path_key],
+            "Endpoint": ENDPOINTS_BY_KEY[endpoint_key].label,
+            "Endpoint-defining assay": primary_assay,
+            "Measurement pathway": PATHWAY_LABELS[pathway],
+            "Verification design": VERIFICATION_DESIGNS[synthesis_path.verification_design],
+            "Endpoint tested N": denominator if isinstance(denominator, int) else None,
+            "Endpoint positive n": numerator if isinstance(numerator, int) else None,
+            "Total tested": denominator if isinstance(denominator, int) else None,
+        }
+    )
+    for field_name, value in counts.items():
+        if field_name in PATH_COUNT_FIELDS:
+            row[PATH_COUNT_FIELDS[field_name][0]] = value
+    for criterion in CRITERIA:
+        if criterion_is_applicable(criterion.code, pathway, endpoint_key):
+            row[criterion.code] = draft[criterion.code].score
+    audit = {
+        "Document": main_source.get("name", ""),
+        "Candidate": candidate["candidate_id"],
+        "Virus": candidate["virus"],
+        "Endpoint": candidate["endpoint_label"],
+        "Synthesis path": synthesis_path_key,
+        "Extraction engine": model.get("provenance", {}).get("extraction_engine_version", DOCUMENT_ENGINE_VERSION),
+        "Rule version": model.get("provenance", {}).get("dare_arbo_rule_version", GUIDE_VERSION),
+        "SHA-256": model.get("document_id", ""),
+        "User modified": bool(overrides.get(candidate["candidate_id"])),
+        "Status": "Reviewer-confirmed draft added",
+    }
+    return row, audit
+
+
+def _render_pdf_evidence_item(label: str, item: dict[str, Any]) -> None:
+    value = item.get("final_value", item.get("value", DOCUMENT_UNRESOLVED))
+    confidence = item.get("confidence", "UNRESOLVED")
+    inference = item.get("inference_level", "UNRESOLVED")
+    st.markdown(f"**{label}**  \n{value}")
+    st.caption(f"{confidence} confidence · {inference} · {_evidence_location_text(item)}")
+    if item.get("evidence_text"):
+        st.markdown(f"> {item['evidence_text']}")
+    if item.get("conflicts"):
+        st.warning("Conflicting candidate values were detected. Review the alternatives before finalizing.")
+
+
 def batch_pdf_intake() -> None:
-    with st.expander("Batch PDF intake and draft evidence scoring", expanded=False):
-        st.caption("Upload multiple articles that share an endpoint configuration. Draft scores are appended to the batch grid and must be reviewer-verified.")
-        synthesis_path_label = st.selectbox(
-            "Default synthesis endpoint and testing strategy",
-            list(SYNTHESIS_PATH_LABELS),
-            key="batch_pdf_synthesis_path",
+    """Direct PDF appraisal using the shared Assessor/Appraiser evidence layer."""
+    with st.expander("Direct PDF appraisal · shared document intelligence", expanded=True):
+        st.caption(
+            "The article is parsed once. Extraction, interpretation, and draft appraisal remain separate, "
+            "and no PDF-derived record is added to the batch until you review it."
         )
-        synthesis_path = SYNTHESIS_PATHS_BY_KEY[SYNTHESIS_PATH_LABELS[synthesis_path_label]]
-        endpoint_key = synthesis_path.endpoint_key
-        pathway = ENDPOINTS_BY_KEY[endpoint_key].default_pathway
-        uploaded_pdfs = st.file_uploader(
-            "Upload article PDFs",
+        upload_col, supplement_col = st.columns(2)
+        main_pdf = upload_col.file_uploader(
+            "Main article PDF",
+            type=["pdf"],
+            key="appraiser_main_pdf",
+            help="Upload one article at a time so its study–virus–endpoint candidates can be reviewed explicitly.",
+        )
+        supplements = supplement_col.file_uploader(
+            "Supplementary material (optional)",
             type=["pdf"],
             accept_multiple_files=True,
-            key="batch_pdf_uploads",
+            key="appraiser_supplement_pdfs",
         )
-        if uploaded_pdfs and st.button("Extract PDFs and append draft rows", type="primary"):
-            existing_hashes = set(st.session_state["batch_pdf_hashes"])
-            new_rows: list[dict[str, Any]] = []
-            evidence_rows: list[dict[str, Any]] = []
-            errors: list[str] = []
-            for uploaded in uploaded_pdfs:
-                pdf_bytes = uploaded.getvalue()
-                file_hash = hashlib.sha256(pdf_bytes).hexdigest()
-                if file_hash in existing_hashes:
-                    continue
-                try:
-                    extracted = extract_pdf_text(pdf_bytes)
-                    row = empty_batch_row()
-                    row["Study ID"] = Path(uploaded.name).stem
-                    row["Synthesis path"] = synthesis_path_label
-                    row["Endpoint"] = ENDPOINTS_BY_KEY[endpoint_key].label
-                    row["Measurement pathway"] = PATHWAY_LABELS[pathway]
-                    if not extracted["scanned_or_empty"]:
-                        draft = suggest_scores(
-                            extracted["pages"], pathway, endpoint_key,
-                            synthesis_path.verification_design,
-                        )
-                        for criterion in CRITERIA:
-                            if criterion_is_applicable(criterion.code, pathway, endpoint_key):
-                                row[criterion.code] = draft[criterion.code].score
-                    new_rows.append(row)
-                    evidence_rows.append(
-                        {
-                            "Document": uploaded.name,
-                            "Pages": extracted["page_count"],
-                            "Extracted characters": extracted["character_count"],
-                            "Status": "Needs OCR/manual entry" if extracted["scanned_or_empty"] else "Draft suggestions added",
-                            "SHA-256": file_hash,
-                        }
-                    )
-                    existing_hashes.add(file_hash)
-                except Exception as exc:
-                    errors.append(f"{uploaded.name}: {exc}")
-            if new_rows:
-                current = st.session_state["batch_grid"]
-                if len(current) == 1 and not str(current.iloc[0].get("Study ID") or "").strip():
-                    current = current.iloc[0:0]
-                st.session_state["batch_grid"] = pd.concat(
-                    [current, pd.DataFrame(new_rows)], ignore_index=True
+        if main_pdf and st.button("Read document and detect endpoints", type="primary"):
+            try:
+                supplement_payload = tuple(
+                    (uploaded.name, uploaded.getvalue()) for uploaded in (supplements or [])
                 )
-                st.session_state["batch_editor_version"] += 1
-                st.session_state["batch_pdf_hashes"] = list(existing_hashes)
-                st.session_state["batch_pdf_evidence"].extend(evidence_rows)
-                st.success(f"Added {len(new_rows)} PDF-derived draft row(s). Verify every score in the grid.")
-            elif not errors:
-                st.info("No new PDFs were added; duplicate files are ignored by SHA-256 hash.")
-            for error in errors:
-                st.error(error)
+                with st.spinner("Reading the complete article and reconstructing endpoint candidates…"):
+                    model = cached_document_model(
+                        main_pdf.getvalue(), main_pdf.name, supplement_payload
+                    )
+                st.session_state["appraiser_pdf_model"] = model
+                st.session_state["appraiser_pdf_candidate_id"] = (
+                    model["candidates"][0]["candidate_id"] if model.get("candidates") else ""
+                )
+                st.session_state["appraiser_pdf_overrides"] = {}
+                st.session_state["appraiser_pdf_review_notice"] = ""
+                st.rerun()
+            except Exception as exc:
+                st.error(f"PDF extraction failed: {exc}")
+
+        model = st.session_state.get("appraiser_pdf_model")
+        if not model:
+            st.info("Upload a main article to start a traceable extraction review. Manual batch entry remains available below.")
+            return
+
+        for warning in model.get("warnings", []):
+            st.warning(warning)
+        sources = model.get("sources", [])
+        source_summary = " · ".join(
+            f"{source.get('name')} ({source.get('page_count', 0)} pages)"
+            for source in sources
+        )
+        st.success(f"Document model ready · {source_summary}")
+        candidates = model.get("candidates", [])
+        if not candidates:
+            st.warning("No defensible endpoint candidate was detected. Continue with manual entry.")
+            return
+
+        st.markdown("#### Document extraction review")
+        candidate_labels = {
+            candidate["candidate_id"]: (
+                f"{candidate['virus']} | {candidate['endpoint_label']} | "
+                f"{candidate.get('fields', {}).get('primary_assay', {}).get('final_value', DOCUMENT_UNRESOLVED)}"
+            )
+            for candidate in candidates
+        }
+        selected_id = st.selectbox(
+            "Detected study–virus–endpoint record",
+            list(candidate_labels),
+            format_func=lambda value: candidate_labels[value],
+            key="appraiser_pdf_candidate_id",
+        )
+        candidate = next(item for item in candidates if item["candidate_id"] == selected_id)
+        overrides = st.session_state.get("appraiser_pdf_overrides", {})
+        selected_overrides = overrides.get(selected_id, {})
+
+        summary_rows = []
+        field_labels = {
+            "target_population": "Target population",
+            "sampling_frame": "Source frame",
+            "site_selection": "Site selection",
+            "participant_selection": "Participant selection",
+            "laboratory_subsampling": "Laboratory subsampling",
+            "endpoint": "Biological endpoint",
+            "primary_assay": "Primary endpoint-defining assay",
+            "confirmatory_assay": "Confirmatory assay",
+            "confirmation_coverage": "Confirmation coverage",
+            "confirmation_role": "Confirmation role",
+            "numerator": "Numerator",
+            "denominator": "Denominator",
+        }
+        for field_id, label in field_labels.items():
+            item = candidate.get("fields", {}).get(field_id, {})
+            override = selected_overrides.get(field_id)
+            summary_rows.append(
+                {
+                    "Field": label,
+                    "Extracted value": item.get("value", DOCUMENT_UNRESOLVED),
+                    "Final value": override.get("final_value") if override else item.get("final_value", DOCUMENT_UNRESOLVED),
+                    "Confidence": item.get("confidence", "UNRESOLVED"),
+                    "Inference": item.get("inference_level", "UNRESOLVED"),
+                    "Source": _evidence_location_text(item),
+                    "Modified": "Yes" if override else "No",
+                }
+            )
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+        if candidate.get("conflicts"):
+            for conflict in candidate["conflicts"]:
+                st.warning(
+                    f"{conflict.get('field')}: {conflict.get('reason')} "
+                    f"Candidates: {conflict.get('candidates')}"
+                )
+
+        population_tab, assay_tab, counts_tab, evidence_tab, override_tab = st.tabs(
+            ("Population", "Assay pathway", "Counts", "Q1–Q10 evidence", "Confirm or edit")
+        )
+        with population_tab:
+            for field_id in ("target_population", "sampling_frame", "site_selection", "participant_selection", "laboratory_subsampling"):
+                _render_pdf_evidence_item(field_labels[field_id], candidate.get("fields", {}).get(field_id, {}))
+                st.divider()
+        with assay_tab:
+            for field_id in ("endpoint", "primary_assay", "confirmatory_assay", "confirmation_coverage", "confirmation_role"):
+                _render_pdf_evidence_item(field_labels[field_id], candidate.get("fields", {}).get(field_id, {}))
+                st.divider()
+        with counts_tab:
+            for field_id in ("numerator", "denominator"):
+                _render_pdf_evidence_item(field_labels[field_id], candidate.get("fields", {}).get(field_id, {}))
+            st.caption("Counts are never reconstructed from percentages or posterior expected positives. Conflicting n/N expressions remain flagged for review.")
+        with evidence_tab:
+            path = SYNTHESIS_PATHS_BY_KEY.get(candidate.get("synthesis_path_key"))
+            pathway = ENDPOINTS_BY_KEY[candidate["endpoint_key"]].default_pathway
+            draft = suggest_scores(
+                model.get("pages", []),
+                pathway,
+                candidate["endpoint_key"],
+                path.verification_design if path else None,
+                synthesis_path_key=candidate.get("synthesis_path_key") if path else None,
+                target_population=str(_pdf_field_value(candidate, "target_population", overrides) or ""),
+                sampling_frame_description=str(_pdf_field_value(candidate, "sampling_frame", overrides) or ""),
+                sampling_recruitment_method=str(_pdf_field_value(candidate, "participant_selection", overrides) or ""),
+                primary_assay=str(_pdf_field_value(candidate, "primary_assay", overrides) or ""),
+                confirmatory_assay=str(_pdf_field_value(candidate, "confirmatory_assay", overrides) or ""),
+            )
+            for criterion in CRITERIA:
+                if not criterion_is_applicable(criterion.code, pathway, candidate["endpoint_key"]):
+                    continue
+                suggestion = draft[criterion.code]
+                with st.expander(f"{criterion.code} · draft {suggestion.score}/{criterion.maximum} · {suggestion.confidence} confidence"):
+                    st.markdown(f"**DARE-Arbo interpretation:** {suggestion.rationale}")
+                    q_items = candidate.get("q_evidence", {}).get(criterion.code, [])
+                    if q_items:
+                        for item in q_items:
+                            st.caption(_evidence_location_text(item))
+                            st.markdown(f"> {item.get('evidence_text', '')}")
+                    else:
+                        st.info("Could not be established from the article. No positive finding has been inferred.")
+        with override_tab:
+            editable_field = st.selectbox(
+                "Field to review",
+                list(field_labels),
+                format_func=lambda value: field_labels[value],
+                key=f"pdf_override_field_{selected_id}",
+            )
+            original_item = candidate.get("fields", {}).get(editable_field, {})
+            original_value = original_item.get("value", DOCUMENT_UNRESOLVED)
+            current_override = selected_overrides.get(editable_field, {})
+            action = st.radio(
+                "Reviewer decision",
+                ("Accept extraction", "Edit value", "Mark unresolved"),
+                horizontal=True,
+                key=f"pdf_override_action_{selected_id}_{editable_field}",
+            )
+            edited_value = st.text_input(
+                "Final value",
+                value=str(current_override.get("final_value", original_value)),
+                disabled=action != "Edit value",
+                key=f"pdf_override_value_{selected_id}_{editable_field}",
+            )
+            override_notes = st.text_area(
+                "Reviewer note",
+                value=str(current_override.get("notes", "")),
+                key=f"pdf_override_note_{selected_id}_{editable_field}",
+            )
+            if st.button("Apply reviewer decision", key=f"apply_pdf_override_{selected_id}"):
+                final_value = (
+                    original_value if action == "Accept extraction"
+                    else DOCUMENT_UNRESOLVED if action == "Mark unresolved"
+                    else edited_value.strip() or DOCUMENT_UNRESOLVED
+                )
+                all_overrides = st.session_state.get("appraiser_pdf_overrides", {})
+                candidate_overrides = all_overrides.setdefault(selected_id, {})
+                candidate_overrides[editable_field] = {
+                    "original_extraction": original_value,
+                    "user_override": None if action == "Accept extraction" else final_value,
+                    "final_value": final_value,
+                    "decision": action,
+                    "notes": override_notes,
+                    "modified_at_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                st.session_state["appraiser_pdf_overrides"] = all_overrides
+                st.session_state["appraiser_pdf_review_notice"] = f"Saved reviewer decision for {field_labels[editable_field]}."
+                st.rerun()
+
+        if st.session_state.get("appraiser_pdf_review_notice"):
+            st.success(st.session_state["appraiser_pdf_review_notice"])
+        finalize_col, download_col = st.columns([1, 1])
+        if finalize_col.button("Finalize selected endpoint as batch draft", type="primary", use_container_width=True):
+            row, audit = _pdf_candidate_to_batch_row(model, candidate, overrides)
+            current = st.session_state["batch_grid"]
+            if len(current) == 1 and not str(current.iloc[0].get("Study ID") or "").strip():
+                current = current.iloc[0:0]
+            st.session_state["batch_grid"] = pd.concat([current, pd.DataFrame([row])], ignore_index=True)
+            st.session_state["batch_editor_version"] += 1
+            st.session_state["batch_pdf_hashes"] = list(set(st.session_state["batch_pdf_hashes"]) | {model["document_id"]})
+            st.session_state["batch_pdf_evidence"].append(audit)
+            st.success("The reviewed endpoint was added as an editable batch draft. Inspect Q1–Q10 in the grid before calculation.")
+        review_export = {
+            **{key: value for key, value in model.items() if key != "pages"},
+            "user_overrides": overrides,
+            "selected_candidate_id": selected_id,
+        }
+        download_col.download_button(
+            "Download evidence and provenance JSON",
+            json.dumps(review_export, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+            f"DARE-Arbo_evidence_{model['document_id'][:12]}.json",
+            "application/json",
+            use_container_width=True,
+        )
 
         if st.session_state["batch_pdf_evidence"]:
-            evidence_frame = pd.DataFrame(st.session_state["batch_pdf_evidence"])
-            st.dataframe(
-                evidence_frame.drop(columns=["SHA-256"]),
-                use_container_width=True,
-                hide_index=True,
-            )
-            st.download_button(
-                "Download PDF intake audit",
-                evidence_frame.to_csv(index=False).encode("utf-8-sig"),
-                "DARE-Arbo_PDF_intake_audit.csv",
-                "text/csv",
-            )
+            with st.expander("Finalized PDF intake audit"):
+                evidence_frame = pd.DataFrame(st.session_state["batch_pdf_evidence"])
+                st.dataframe(evidence_frame.drop(columns=["SHA-256"], errors="ignore"), use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download PDF intake audit",
+                    evidence_frame.to_csv(index=False).encode("utf-8-sig"),
+                    "DARE-Arbo_PDF_intake_audit.csv",
+                    "text/csv",
+                )
 
 
 def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

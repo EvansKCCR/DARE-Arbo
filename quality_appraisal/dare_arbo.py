@@ -3439,38 +3439,20 @@ def audit_synthesis_path_counts(
 
 
 def extract_pdf_text(source: bytes | bytearray | BinaryIO) -> dict[str, Any]:
-    """Extract page-aware text from a PDF without persisting the document."""
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:  # pragma: no cover - dependency error shown in UI
-        raise RuntimeError("PDF extraction requires the 'pypdf' package.") from exc
+    """Extract page-aware text through the shared document-intelligence reader.
 
-    stream: BinaryIO
-    if isinstance(source, (bytes, bytearray)):
-        stream = BytesIO(source)
-    else:
-        stream = source
-    reader = PdfReader(stream)
-    if reader.is_encrypted:
-        try:
-            reader.decrypt("")
-        except Exception as exc:
-            raise ValueError("The PDF is encrypted and cannot be read without a password.") from exc
-    pages: list[str] = []
-    for page in reader.pages:
-        pages.append((page.extract_text() or "").strip())
-    raw_metadata = reader.metadata or {}
-    metadata = {
-        str(key).lstrip("/").lower(): str(value).strip()
-        for key, value in raw_metadata.items()
-        if value not in (None, "")
-    }
+    This compatibility wrapper keeps existing Assessor callers stable while
+    ensuring the Assessor and Appraiser use exactly the same PDF reader.
+    """
+    from document_intelligence import read_pdf
+
+    document = read_pdf(source)
     return {
-        "pages": pages,
-        "metadata": metadata,
-        "page_count": len(pages),
-        "character_count": sum(len(page) for page in pages),
-        "scanned_or_empty": not any(page.strip() for page in pages),
+        "pages": document["pages"],
+        "metadata": document["metadata"],
+        "page_count": document["page_count"],
+        "character_count": document["character_count"],
+        "scanned_or_empty": document["scanned_or_empty"],
     }
 
 
