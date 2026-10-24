@@ -27,11 +27,6 @@ The Designer report keeps planning logic and presentation separate:
 
 Planning coverage in this report is a documentation-completeness indicator. It is not a risk-of-bias, methodological-validity, or study-quality score.
 
-## Test the rule engine
-
-```powershell
-python -m unittest discover -s tests -v
-```
 
 ## PDF behavior and privacy
 
