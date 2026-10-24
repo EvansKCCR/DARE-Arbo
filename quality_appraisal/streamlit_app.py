@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 from datetime import date, datetime, timezone
 import hashlib
+import html
 from io import BytesIO
 import json
 from pathlib import Path
@@ -212,6 +213,217 @@ def png_data_uri(image_bytes: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
 
 
+def _safe_ui_text(value: Any, fallback: str = "Not specified") -> str:
+    """Escape session/user text before it is included in workspace HTML."""
+    text = str(value or "").strip() or fallback
+    return html.escape(text)
+
+
+def render_status_badge(label: str, tone: str = "neutral") -> str:
+    """Return a compact semantic status badge for shared workspace components."""
+    allowed_tones = {"neutral", "info", "success", "warning", "danger"}
+    resolved_tone = tone if tone in allowed_tones else "neutral"
+    return (
+        f'<span class="dare-status dare-status--{resolved_tone}">'
+        f'{_safe_ui_text(label)}</span>'
+    )
+
+
+def render_workspace_header(
+    title: str,
+    description: str,
+    *,
+    eyebrow: str = "DARE-Arbo scientific workspace",
+    status: tuple[str, str] | None = None,
+) -> None:
+    """Render the compact working-page header used outside landing/About pages."""
+    logo_html: list[str] = []
+    if LOGO_PATH.exists():
+        logo_html.append(
+            f'<img src="{png_data_uri(LOGO_PATH.read_bytes())}" alt="KCCR logo">'
+        )
+    if SYNERGY_LOGO_PATH.exists():
+        logo_html.append(
+            '<img src="'
+            + png_data_uri(prepared_square_logo(SYNERGY_LOGO_PATH.read_bytes()))
+            + '" alt="Synergy NGS 2025 logo">'
+        )
+    status_html = render_status_badge(*(status or ("Workspace ready", "success")))
+    st.markdown(
+        f"""
+        <header class="dare-workspace-header">
+          <div class="dare-workspace-header__copy">
+            <div class="dare-eyebrow">{_safe_ui_text(eyebrow)}</div>
+            <div class="dare-workspace-header__title-row">
+              <h1>{_safe_ui_text(title)}</h1>{status_html}
+            </div>
+            <p>{_safe_ui_text(description)}</p>
+          </div>
+          <div class="dare-workspace-header__logos">{''.join(logo_html)}</div>
+        </header>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_context_bar(items: dict[str, Any]) -> None:
+    """Render persistent study/endpoint context without duplicating form fields."""
+    cells = "".join(
+        '<div class="dare-context__item">'
+        f'<span>{_safe_ui_text(label)}</span>'
+        f'<strong title="{_safe_ui_text(value)}">{_safe_ui_text(value)}</strong>'
+        '</div>'
+        for label, value in items.items()
+    )
+    st.markdown(
+        f'<section class="dare-context" aria-label="Current workspace context">{cells}</section>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_workflow_steps(labels: tuple[str, ...] | list[str]) -> list[Any]:
+    """Create directly navigable workflow tabs with consistent numbered labels."""
+    return st.tabs(list(labels))
+
+
+def render_section_header(
+    step: str,
+    title: str,
+    description: str,
+    *,
+    status: tuple[str, str] | None = None,
+) -> None:
+    status_html = render_status_badge(*status) if status else ""
+    st.markdown(
+        f"""
+        <div class="dare-section-heading">
+          <div><span class="dare-section-step">{_safe_ui_text(step)}</span>
+          <h2>{_safe_ui_text(title)}</h2></div>
+          {status_html}
+          <p>{_safe_ui_text(description)}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_endpoint_summary(
+    classification: dict[str, Any],
+    synthesis_path: Any,
+) -> None:
+    """Render the endpoint definition as a compact scientific summary card."""
+    st.markdown(
+        f"""
+        <section class="dare-endpoint-summary">
+          <div class="dare-endpoint-summary__top">
+            <div>
+              <span class="dare-kicker">Selected study–virus–estimand</span>
+              <h3>{_safe_ui_text(classification.get('endpoint'))}</h3>
+            </div>
+            {render_status_badge(synthesis_path.summary_estimator, 'info')}
+          </div>
+          <div class="dare-summary-grid">
+            <div><span>Assay role</span><strong>{_safe_ui_text(classification.get('assay_role'))}</strong></div>
+            <div><span>Measurement pathway</span><strong>{_safe_ui_text(classification.get('measurement_pathway'))}</strong></div>
+            <div><span>Numerator</span><strong>{_safe_ui_text(synthesis_path.numerator)}</strong></div>
+            <div><span>Denominator</span><strong>{_safe_ui_text(synthesis_path.denominator)}</strong></div>
+          </div>
+          <p class="dare-summary-note"><strong>Assay type:</strong> {_safe_ui_text(synthesis_path.assay_type)} · <strong>False positives:</strong> {_safe_ui_text(synthesis_path.false_positives)}</p>
+          <p class="dare-summary-caution">{_safe_ui_text(classification.get('caution'))}</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_assay_pathway(
+    primary: str,
+    verification: str,
+    estimator: str,
+) -> None:
+    """Render a small responsive assay-to-estimator pathway."""
+    stages = (primary, verification, estimator)
+    stage_html = '<span class="dare-path-arrow" aria-hidden="true">→</span>'.join(
+        f'<span class="dare-path-node">{_safe_ui_text(stage)}</span>' for stage in stages
+    )
+    st.markdown(
+        f'<div class="dare-assay-path" aria-label="Assay pathway">{stage_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_criterion(criterion: Any, suggestion: Any | None = None) -> None:
+    """Render a standardized criterion header before its scoring controls."""
+    suggestion_badge = ""
+    if suggestion is not None:
+        suggestion_badge = render_status_badge(
+            f"Draft {suggestion.score}/{criterion.maximum}", "warning"
+        )
+    st.markdown(
+        f"""
+        <div class="dare-criterion-heading">
+          <div><span>{_safe_ui_text(criterion.code)}</span>
+          <h3>{_safe_ui_text(criterion.label)}</h3></div>
+          {suggestion_badge}
+          <p>{_safe_ui_text(criterion.question)}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_analysis_unit_table(readiness: dict[str, Any]) -> None:
+    """Render Designer analysis units with one consistent, synthesis-ready schema."""
+    analysis_units = readiness.get("analysis_units", [])
+    if not analysis_units:
+        st.info("Complete the endpoint and surveillance definition to create analysis units.")
+        return
+    preferred = [
+        "surveillance_stream", "virus", "endpoint", "testing_strategy",
+        "numerator", "denominator", "summary_estimator",
+    ]
+    frame = pd.DataFrame(analysis_units)
+    columns = [column for column in preferred if column in frame.columns]
+    st.dataframe(frame[columns], hide_index=True, use_container_width=True)
+
+
+def render_readiness_panel(readiness: dict[str, Any]) -> None:
+    """Render planning readiness without implying an official risk category."""
+    metric_cols = st.columns(5)
+    for column, pillar in zip(metric_cols[:3], readiness["pillars"]):
+        result = readiness["pillars"][pillar]
+        column.metric(pillar, f"{result['percentage']:.0f}%")
+    metric_cols[3].metric("Coverage floor", f"{readiness['balance_floor']:.0f}%")
+    metric_cols[4].metric("Analysis units", readiness.get("analysis_unit_count", 0))
+    for pillar, result in readiness["pillars"].items():
+        st.progress(
+            result["percentage"] / 100,
+            text=f"{pillar}: {result['percentage']:.0f}% planning coverage",
+        )
+
+
+def render_review_summary(result: dict[str, Any]) -> None:
+    """Render the shared Assessor review metrics in a compact summary row."""
+    cols = st.columns(5)
+    cols[0].metric("DARE-Arbo score", f"{result['total']} / {result['maximum']}")
+    cols[1].metric("Items completed", f"{result['scored_count']} / {result['applicable_count']}")
+    cols[2].metric(
+        "Study design",
+        f"{sum(result['domains'][d]['score'] for d in DOMAINS[:2])} / "
+        f"{sum(result['domains'][d]['maximum'] for d in DOMAINS[:2])}",
+    )
+    cols[3].metric(
+        "Assay",
+        f"{result['domains']['Laboratory assay']['score']} / "
+        f"{result['domains']['Laboratory assay']['maximum']}",
+    )
+    cols[4].metric(
+        "Reporting",
+        f"{result['domains']['Reporting outcome']['score']} / "
+        f"{result['domains']['Reporting outcome']['maximum']}",
+    )
+
+
 def configure_page() -> None:
     st.set_page_config(
         page_title="DARE-Arbo | Arboviral Risk-of-Bias Tools",
@@ -263,10 +475,10 @@ def configure_page() -> None:
         }
         [data-testid="stMainBlockContainer"] {
           position: relative;
-          width: min(100%, 1480px);
+          width: min(100%, 1400px);
           min-height: 100vh;
           margin-inline: auto;
-          padding: 1.35rem clamp(1rem, 2.5vw, 2.5rem) 3rem;
+          padding: 1rem clamp(1rem, 2.2vw, 2.25rem) 3rem;
           background: rgba(255, 255, 255, .96);
           border-inline: 1px solid rgba(203, 213, 225, .72);
           box-shadow: var(--dare-shadow);
@@ -292,16 +504,19 @@ def configure_page() -> None:
           color: var(--dare-navy-800);
           font-size: clamp(1.18rem, 1.45vw, 1.42rem);
           line-height: 1.3;
-          margin-top: 1.6rem;
+          margin-top: 1.2rem;
           padding-bottom: .42rem;
           border-bottom: 1px solid #E2E8F0;
         }
         [data-testid="stSidebar"] {
           background: linear-gradient(180deg, var(--dare-navy-950), #091F36 70%, #06182C);
           border-right: 1px solid rgba(255, 255, 255, .1);
+          min-width: 238px !important;
+          max-width: 238px !important;
         }
         [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
           padding-top: 1rem;
+          width: 238px !important;
         }
         [data-testid="stSidebar"] p,
         [data-testid="stSidebar"] label,
@@ -320,7 +535,40 @@ def configure_page() -> None:
         [data-testid="stSidebar"] .stRadio label:hover {
           background: rgba(15, 118, 110, .28);
         }
-        [data-testid="stSidebar"] input[type="radio"] { accent-color: #2DD4BF; }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] {
+          gap: .2rem;
+        }
+        [data-testid="stSidebar"] .stRadio input[type="radio"] {
+          position: absolute;
+          opacity: 0;
+          pointer-events: none;
+        }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(1)::before,
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(2)::before,
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(4)::before,
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(5)::before,
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(6)::before {
+          position: absolute;
+          top: -.95rem;
+          left: .15rem;
+          color: #7DD3FC;
+          font-size: .64rem;
+          font-weight: 800;
+          letter-spacing: .13em;
+        }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(1),
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(2),
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(4),
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(5),
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(6) {
+          position: relative;
+          margin-top: 1.15rem;
+        }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(1)::before { content: "OVERVIEW"; }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(2)::before { content: "ASSESS"; }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(4)::before { content: "DESIGN"; }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(5)::before { content: "REFERENCE"; }
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:nth-child(6)::before { content: "SYSTEM"; }
         [data-testid="stSidebar"] label:has(input[type="radio"]:checked) {
           background: rgba(15, 118, 110, .38);
           box-shadow: inset 4px 0 0 #5EEAD4;
@@ -359,6 +607,285 @@ def configure_page() -> None:
           object-fit: contain;
         }
         .dare-mobile-brand { display: none; }
+        .dare-workspace-header {
+          min-height: 82px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1.5rem;
+          padding: .9rem 1.1rem;
+          margin: 0 0 .72rem;
+          color: #FFFFFF;
+          background: linear-gradient(120deg, var(--dare-navy-950), var(--dare-navy-800));
+          border-radius: 13px;
+          border-bottom: 4px solid var(--dare-teal-700);
+          box-shadow: 0 7px 18px rgba(7, 28, 53, .12);
+        }
+        .dare-workspace-header__copy { min-width: 0; }
+        .dare-eyebrow,
+        .dare-kicker {
+          color: #99F6E4;
+          font-size: .7rem;
+          line-height: 1.2;
+          font-weight: 800;
+          letter-spacing: .09em;
+          text-transform: uppercase;
+        }
+        .dare-workspace-header__title-row {
+          display: flex;
+          align-items: center;
+          gap: .7rem;
+          flex-wrap: wrap;
+        }
+        .dare-workspace-header h1 {
+          margin: .08rem 0 !important;
+          color: #FFFFFF !important;
+          font-size: clamp(1.35rem, 2vw, 1.82rem) !important;
+          line-height: 1.1 !important;
+          letter-spacing: -.015em !important;
+        }
+        .dare-workspace-header p {
+          margin: .12rem 0 0;
+          color: #DDEAF4 !important;
+          font-size: .84rem;
+          line-height: 1.35 !important;
+        }
+        .dare-workspace-header__logos {
+          display: flex;
+          align-items: center;
+          gap: .45rem;
+          flex: 0 0 auto;
+        }
+        .dare-workspace-header__logos img {
+          width: 44px;
+          height: 44px;
+          object-fit: contain;
+          padding: 3px;
+          background: #FFFFFF;
+          border: 1px solid rgba(255,255,255,.6);
+          border-radius: 8px;
+        }
+        .dare-status {
+          display: inline-flex;
+          align-items: center;
+          width: fit-content;
+          min-height: 24px;
+          padding: .2rem .52rem;
+          border: 1px solid transparent;
+          border-radius: 999px;
+          font-size: .7rem;
+          line-height: 1.15;
+          font-weight: 800;
+          white-space: normal;
+        }
+        .dare-status--neutral { color: #334155; background: #F1F5F9; border-color: #CBD5E1; }
+        .dare-status--info { color: #075985; background: #E0F2FE; border-color: #7DD3FC; }
+        .dare-status--success { color: #065F46; background: #ECFDF5; border-color: #6EE7B7; }
+        .dare-status--warning { color: #92400E; background: #FFFBEB; border-color: #FCD34D; }
+        .dare-status--danger { color: #991B1B; background: #FEF2F2; border-color: #FCA5A5; }
+        .dare-workspace-header .dare-status--success {
+          color: #D1FAE5;
+          background: rgba(16,185,129,.15);
+          border-color: rgba(110,231,183,.55);
+        }
+        .dare-context {
+          position: sticky;
+          top: 2.9rem;
+          z-index: 8;
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          margin: 0 0 .85rem;
+          background: rgba(255, 255, 255, .97);
+          border: 1px solid var(--dare-border);
+          border-radius: 11px;
+          box-shadow: 0 4px 13px rgba(7, 28, 53, .07);
+          backdrop-filter: blur(8px);
+        }
+        .dare-context__item {
+          min-width: 0;
+          padding: .48rem .68rem;
+          border-right: 1px solid #E2E8F0;
+        }
+        .dare-context__item:last-child { border-right: 0; }
+        .dare-context__item span {
+          display: block;
+          color: var(--dare-muted);
+          font-size: .64rem;
+          font-weight: 800;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+        }
+        .dare-context__item strong {
+          display: block;
+          overflow: hidden;
+          margin-top: .12rem;
+          color: var(--dare-navy-950);
+          font-size: .78rem;
+          line-height: 1.25;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .dare-section-heading {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: start;
+          gap: .25rem 1rem;
+          margin: .35rem 0 .9rem;
+          padding: 0 0 .65rem;
+          border-bottom: 1px solid #DCE5ED;
+        }
+        .dare-section-heading > div:first-child {
+          display: flex;
+          align-items: center;
+          gap: .58rem;
+        }
+        .dare-section-step {
+          display: inline-grid;
+          place-items: center;
+          flex: 0 0 auto;
+          min-width: 29px;
+          height: 29px;
+          padding: 0 .42rem;
+          color: #FFFFFF;
+          background: var(--dare-navy-800);
+          border-radius: 8px;
+          font-size: .76rem;
+          font-weight: 800;
+        }
+        .dare-section-heading h2 {
+          margin: 0 !important;
+          font-size: clamp(1.18rem, 1.7vw, 1.45rem) !important;
+        }
+        .dare-section-heading p {
+          grid-column: 1 / -1;
+          margin: 0;
+          color: var(--dare-muted) !important;
+          font-size: .82rem;
+        }
+        .dare-endpoint-summary {
+          padding: .95rem 1rem;
+          margin: .2rem 0 .8rem;
+          background: linear-gradient(135deg, #F8FAFC, #F0FDFA);
+          border: 1px solid #B8D8D4;
+          border-left: 5px solid var(--dare-teal-700);
+          border-radius: 12px;
+        }
+        .dare-endpoint-summary__top {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: .8rem;
+          margin-bottom: .72rem;
+        }
+        .dare-endpoint-summary h3 {
+          margin: .12rem 0 0 !important;
+          padding: 0 !important;
+          border: 0 !important;
+          color: var(--dare-navy-950) !important;
+          font-size: 1.08rem !important;
+        }
+        .dare-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: .55rem;
+        }
+        .dare-summary-grid > div {
+          min-width: 0;
+          padding: .58rem .65rem;
+          background: #FFFFFF;
+          border: 1px solid #D8E2EA;
+          border-radius: 8px;
+        }
+        .dare-summary-grid span {
+          display: block;
+          color: var(--dare-muted);
+          font-size: .66rem;
+          font-weight: 750;
+          text-transform: uppercase;
+          letter-spacing: .045em;
+        }
+        .dare-summary-grid strong {
+          display: block;
+          margin-top: .18rem;
+          color: var(--dare-ink);
+          font-size: .79rem;
+          line-height: 1.3;
+        }
+        .dare-summary-note,
+        .dare-summary-caution {
+          margin: .55rem 0 0;
+          color: var(--dare-muted) !important;
+          font-size: .76rem;
+          line-height: 1.4 !important;
+        }
+        .dare-summary-caution { color: #7C2D12 !important; }
+        .dare-assay-path {
+          display: flex;
+          align-items: stretch;
+          gap: .4rem;
+          margin: 0 0 .95rem;
+          padding: .55rem;
+          background: #F8FAFC;
+          border: 1px solid var(--dare-border);
+          border-radius: 10px;
+        }
+        .dare-path-node {
+          flex: 1 1 0;
+          display: grid;
+          place-items: center;
+          min-height: 42px;
+          padding: .45rem .6rem;
+          color: var(--dare-navy-900);
+          background: #FFFFFF;
+          border: 1px solid #C7D5E0;
+          border-radius: 8px;
+          font-size: .76rem;
+          line-height: 1.25;
+          font-weight: 700;
+          text-align: center;
+          text-decoration: none;
+        }
+        .dare-path-arrow {
+          align-self: center;
+          color: var(--dare-teal-700);
+          font-size: 1rem;
+          font-weight: 900;
+        }
+        .dare-criterion-heading {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: start;
+          gap: .25rem .8rem;
+          margin: .2rem 0 .55rem;
+          padding: .68rem .78rem;
+          background: #F8FAFC;
+          border: 1px solid #DCE5ED;
+          border-left: 4px solid var(--dare-blue-600);
+          border-radius: 9px;
+        }
+        .dare-criterion-heading > div:first-child {
+          display: flex;
+          align-items: baseline;
+          gap: .52rem;
+        }
+        .dare-criterion-heading > div > span {
+          color: var(--dare-blue-600);
+          font-weight: 850;
+        }
+        .dare-criterion-heading h3 {
+          margin: 0 !important;
+          padding: 0 !important;
+          border: 0 !important;
+          color: var(--dare-navy-950) !important;
+          font-size: 1rem !important;
+        }
+        .dare-criterion-heading p {
+          grid-column: 1 / -1;
+          margin: 0;
+          color: var(--dare-muted) !important;
+          font-size: .78rem;
+          line-height: 1.4 !important;
+        }
         .dare-card {
           border: 1px solid var(--dare-border);
           border-radius: var(--dare-radius);
@@ -492,6 +1019,9 @@ def configure_page() -> None:
           color: var(--dare-teal-800);
           box-shadow: inset 0 -3px 0 var(--dare-teal-700), 0 2px 8px rgba(7, 28, 53, .08);
         }
+        [role="tabpanel"] {
+          padding-top: .8rem;
+        }
         [data-testid="stExpander"] {
           overflow: hidden;
           border: 1px solid var(--dare-border);
@@ -556,17 +1086,21 @@ def configure_page() -> None:
         a:hover { color: #1E40AF; }
         @media (max-width: 980px) {
           [data-testid="stSidebar"] {
-            min-width: 250px !important;
-            max-width: 250px !important;
+            min-width: 226px !important;
+            max-width: 226px !important;
           }
           [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            width: 250px !important;
+            width: 226px !important;
           }
           [data-testid="stMainBlockContainer"] {
             padding: 1rem 1rem 2.5rem;
             border-inline: 0;
           }
           div[data-testid="stMetric"] { min-height: 94px; }
+          .dare-context { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .dare-context__item:nth-child(3) { border-right: 0; }
+          .dare-context__item:nth-child(n+4) { border-top: 1px solid #E2E8F0; }
+          .dare-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 700px) {
           html { font-size: 15px; }
@@ -595,6 +1129,20 @@ def configure_page() -> None:
           [data-baseweb="tab-list"] { border-radius: 9px; }
           .stButton > button, .stDownloadButton > button { width: 100%; }
           [data-testid="stMetricValue"] { font-size: 1.45rem; }
+          .dare-workspace-header { min-height: 76px; padding: .78rem .82rem; }
+          .dare-workspace-header__logos img { width: 36px; height: 36px; }
+          .dare-context {
+            position: static;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .dare-context__item { border-top: 1px solid #E2E8F0; }
+          .dare-context__item:nth-child(-n+2) { border-top: 0; }
+          .dare-context__item:nth-child(even) { border-right: 0; }
+          .dare-context__item:nth-child(3) { border-right: 1px solid #E2E8F0; }
+          .dare-summary-grid { grid-template-columns: 1fr; }
+          .dare-endpoint-summary__top { display: grid; }
+          .dare-assay-path { flex-direction: column; }
+          .dare-path-arrow { transform: rotate(90deg); }
         }
         @media (max-width: 420px) {
           html { font-size: 14.5px; }
@@ -668,6 +1216,7 @@ def initialize_state() -> None:
         "synthesis_path_selector": "serology_apparent",
         "sampling_frame_category": "",
         "page_background_color": "#F4F7F5",
+        "workspace_page": "Assessor",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -752,6 +1301,10 @@ def reset_page_background() -> None:
     st.session_state["page_background_color"] = "#F4F7F5"
 
 
+def navigate_to_workspace(page: str) -> None:
+    st.session_state["workspace_page"] = page
+
+
 def sidebar() -> str:
     if LOGO_PATH.exists() and SYNERGY_LOGO_PATH.exists():
         logo_columns = st.sidebar.columns([1, 1], gap="small")
@@ -762,34 +1315,117 @@ def sidebar() -> str:
     elif SYNERGY_LOGO_PATH.exists():
         st.sidebar.image(prepared_square_logo(SYNERGY_LOGO_PATH.read_bytes()), width=84)
     st.sidebar.markdown("### DARE-Arbo")
+    st.sidebar.caption("Expert scientific workspace")
     page = st.sidebar.radio(
         "Workspace",
-        ("Assessor", "Appraiser", "DARE-Arbo Designer", "Framework", "About & deployment"),
+        (
+            "Home",
+            "Assessor",
+            "Appraiser",
+            "DARE-Arbo Designer",
+            "Framework",
+            "About & deployment",
+        ),
         label_visibility="collapsed",
+        key="workspace_page",
     )
-    with st.sidebar.expander("Appearance", expanded=False):
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"[Support · {CONTACT_EMAIL}](mailto:{CONTACT_EMAIL})")
+    st.sidebar.caption("Appearance and feedback controls are available on Home.")
+    st.sidebar.caption("The total is a continuous methodological-quality score. DARE-Arbo does not impose low/moderate/high bands.")
+    st.sidebar.caption(GUIDE_VERSION)
+    return page
+
+
+def landing_page() -> None:
+    hero()
+    st.markdown(
+        "### From study evidence to transparent, endpoint-specific appraisal"
+    )
+    st.caption(
+        "Choose a workspace. Each tool preserves the DARE-Arbo study–virus–estimand "
+        "unit and its assay, denominator, estimator, and audit trail."
+    )
+    workspace_cards = [
+        (
+            "Assessor",
+            "Appraise one article outcome",
+            "Extract PDF evidence, define the endpoint pathway, score 12 criteria, and export an auditable record.",
+            "Open Assessor",
+        ),
+        (
+            "Appraiser",
+            "Synthesize multiple appraisals",
+            "Import Assessor records, manage rapid batch rows, inspect domain patterns, and export synthesis tables.",
+            "Open Appraiser",
+        ),
+        (
+            "DARE-Arbo Designer",
+            "Design a surveillance study",
+            "Balance population coverage, assay architecture, estimator-ready counts, and reproducible reporting.",
+            "Open Designer",
+        ),
+    ]
+    columns = st.columns(3)
+    for column, (page, title, description, button_label) in zip(columns, workspace_cards):
+        with column:
+            st.markdown(
+                f"""
+                <article class="dare-card" style="min-height:178px">
+                  <span class="dare-kicker">{_safe_ui_text(page)}</span>
+                  <h3 style="margin-top:.45rem">{_safe_ui_text(title)}</h3>
+                  <p class="muted">{_safe_ui_text(description)}</p>
+                </article>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.button(
+                button_label,
+                key=f"home_open_{page}",
+                type="primary" if page == "Assessor" else "secondary",
+                use_container_width=True,
+                on_click=navigate_to_workspace,
+                args=(page,),
+            )
+
+    utility_left, utility_right = st.columns([1, 1])
+    with utility_left:
+        render_section_header(
+            "A",
+            "Appearance",
+            "Adjust the workspace background independently from downloadable figure colors.",
+        )
         st.color_picker(
             "Workspace page color",
             key="page_background_color",
-            help="Changes the app workspace only. It does not change the downloadable PNG.",
+            help="Changes the app workspace only. Downloadable PNG colors remain independent.",
         )
         st.button(
-            "Reset page color",
+            "Reset workspace color",
             on_click=reset_page_background,
             use_container_width=True,
             key="reset_page_background",
         )
-        st.caption("The sidebar and presentation-export colors remain independent.")
-    with st.sidebar.expander("Comments & support", expanded=False):
-        st.markdown(
-            f"Questions or technical queries:  \n"
-            f"[{CONTACT_EMAIL}](mailto:{CONTACT_EMAIL})"
+    with utility_right:
+        render_section_header(
+            "B",
+            "Reference and support",
+            "Open the scientific rules or contact the project team without interrupting an appraisal.",
         )
-        st.caption("A detailed feedback form is available at the bottom of every page.")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("The total is a continuous methodological-quality score. DARE-Arbo does not impose low/moderate/high bands.")
-    st.sidebar.caption(GUIDE_VERSION)
-    return page
+        action_cols = st.columns(2)
+        action_cols[0].button(
+            "Open Framework",
+            use_container_width=True,
+            on_click=navigate_to_workspace,
+            args=("Framework",),
+        )
+        action_cols[1].button(
+            "About & deployment",
+            use_container_width=True,
+            on_click=navigate_to_workspace,
+            args=("About & deployment",),
+        )
+        st.markdown(f"Questions and technical support: [{CONTACT_EMAIL}](mailto:{CONTACT_EMAIL})")
 
 
 def reset_single_assessment() -> None:
@@ -1076,7 +1712,12 @@ def sync_synthesis_path() -> None:
 
 
 def endpoint_controls() -> tuple[str, str, str, str]:
-    st.subheader("1. Define the extracted endpoint")
+    render_section_header(
+        "01",
+        "Define the synthesis endpoint",
+        "Select the biological endpoint first, then the testing strategy that produced the estimand.",
+        status=("Required", "warning"),
+    )
     left, right = st.columns([1, 1.35])
     endpoint_keys = list(SYNTHESIS_ENDPOINT_ORDER)
     with left:
@@ -1108,20 +1749,13 @@ def endpoint_controls() -> tuple[str, str, str, str]:
     st.session_state["single_pathway"] = pathway
     st.session_state["verification_design"] = verification_design
     classification = classify_synthesis(endpoint_key, verification_design)
-    st.markdown(
-        f"""
-        <div class="dare-card">
-          <span class="dare-chip">{classification['endpoint']}</span>
-          <span class="dare-chip">{synthesis_path.summary_estimator}</span>
-          <p><strong>Assay role:</strong> {classification['assay_role']}</p>
-          <p><strong>Measurement pathway:</strong> {classification['measurement_pathway']}</p>
-          <p><strong>Assay type:</strong> {synthesis_path.assay_type}</p>
-          <p><strong>Numerator:</strong> {synthesis_path.numerator} &nbsp; <strong>Denominator:</strong> {synthesis_path.denominator}</p>
-          <p><strong>False positives:</strong> {synthesis_path.false_positives}</p>
-          <p class="muted">{classification['caution']}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    render_endpoint_summary(classification, synthesis_path)
+    render_assay_pathway(
+        synthesis_path.assay_type,
+        VERIFICATION_DESIGNS.get(
+            verification_design, verification_design or "No verification"
+        ),
+        synthesis_path.summary_estimator,
     )
     return endpoint_key, pathway, verification_design, synthesis_path_key
 
@@ -1206,7 +1840,11 @@ def document_intake(
             st.session_state["citation_autofill_notice"] = (
                 f"Found {pending_identifier['kind']} '{pending_identifier['value']}', but preserved the citation/DOI already entered by the reviewer."
             )
-    st.subheader("2. Add the study and source document")
+    render_section_header(
+        "02",
+        "Add study details and evidence",
+        "Record the estimand context, assay pathway, observed counts, and optional source PDF.",
+    )
     synthesis_path = SYNTHESIS_PATHS_BY_KEY[synthesis_path_key]
     metadata_col, upload_col = st.columns([1, 1.05])
     with metadata_col:
@@ -1601,8 +2239,7 @@ def apply_suggested_score(criterion_code: str, suggested_score: int) -> None:
 def criterion_panel(criterion: Any, pathway: str, endpoint_key: str) -> None:
     applicable = criterion_is_applicable(criterion.code, pathway, endpoint_key)
     suggestion = st.session_state.get("suggestions", {}).get(criterion.code)
-    st.markdown(f"#### {criterion.code}. {criterion.label} · 0-{criterion.maximum}")
-    st.caption(criterion.question)
+    render_criterion(criterion, suggestion if applicable else None)
     if not applicable:
         st.session_state[f"score_{criterion.code}"] = None
         st.info("Not applicable for this synthesis endpoint. Do not score this as zero.")
@@ -1654,7 +2291,11 @@ def criterion_panel(criterion: Any, pathway: str, endpoint_key: str) -> None:
 
 
 def assessment_form(pathway: str, endpoint_key: str) -> tuple[dict[str, Any], dict[str, str]]:
-    st.subheader("3. Score each DARE-Arbo criterion")
+    render_section_header(
+        "03",
+        "Appraise the DARE-Arbo domains",
+        "Review the operational rule, record a score, and retain an audit comment for every applicable criterion.",
+    )
     with st.expander("Q1-Q5 decision order and dictionary mapping", expanded=False):
         st.markdown(
             """
@@ -1728,7 +2369,11 @@ def single_results(
     scores: dict[str, Any],
     comments: dict[str, str],
 ) -> None:
-    st.subheader("4. Review and export")
+    render_section_header(
+        "04",
+        "Review, validate, and export",
+        "Confirm completeness, inspect the estimator audit, and download presentation- and synthesis-ready outputs.",
+    )
     result = score_assessment(scores, pathway, endpoint_key)
     timing = update_assessment_timing(scores, comments, result["complete"])
     metadata = {**metadata, **timing}
@@ -1777,12 +2422,7 @@ def single_results(
         classification = classify_synthesis(
             endpoint_key, count_audit["effective_verification_design"]
         )
-    cols = st.columns(5)
-    cols[0].metric("DARE-Arbo score", f"{result['total']} / {result['maximum']}")
-    cols[1].metric("Items completed", f"{result['scored_count']} / {result['applicable_count']}")
-    cols[2].metric("Study design", f"{sum(result['domains'][d]['score'] for d in DOMAINS[:2])} / {sum(result['domains'][d]['maximum'] for d in DOMAINS[:2])}")
-    cols[3].metric("Assay", f"{result['domains']['Laboratory assay']['score']} / {result['domains']['Laboratory assay']['maximum']}")
-    cols[4].metric("Reporting", f"{result['domains']['Reporting outcome']['score']} / {result['domains']['Reporting outcome']['maximum']}")
+    render_review_summary(result)
 
     assessor_id = str(metadata.get("assessor_id") or "").strip()
     completed_at = str(timing.get("assessment_completed_at_utc") or "")
@@ -1978,14 +2618,71 @@ def single_results(
 
 def assessor_page() -> None:
     ensure_assessment_started()
-    hero()
-    st.markdown("Use one record per **study-virus-estimand**. Define the target population, biological endpoint, endpoint-defining assay, testing/verification population, observed numerator/denominator, and summary estimator before scoring.")
-    endpoint_key, pathway, verification_design, synthesis_path_key = endpoint_controls()
-    _, metadata = document_intake(
-        pathway, endpoint_key, verification_design, synthesis_path_key
+    current_endpoint = str(st.session_state.get("endpoint_selector") or ENDPOINTS[0].key)
+    current_path = str(st.session_state.get("synthesis_path_selector") or "serology_apparent")
+    current_path_definition = SYNTHESIS_PATHS_BY_KEY.get(current_path)
+    applicable_items = [
+        criterion
+        for criterion in CRITERIA
+        if criterion_is_applicable(
+            criterion.code,
+            ENDPOINTS_BY_KEY[current_endpoint].default_pathway,
+            current_endpoint,
+        )
+    ]
+    completed_items = sum(
+        st.session_state.get(f"score_{criterion.code}") is not None
+        for criterion in applicable_items
     )
-    scores, comments = assessment_form(pathway, endpoint_key)
-    single_results(metadata, endpoint_key, pathway, verification_design, scores, comments)
+    assessment_complete = completed_items == len(applicable_items)
+    status_label = (
+        "Assessment complete"
+        if assessment_complete
+        else f"Draft · {completed_items}/{len(applicable_items)} items"
+    )
+    render_workspace_header(
+        "Arboviral Risk-of-Bias Assessor",
+        "One auditable record per study–virus–estimand, from source evidence to export.",
+        status=(status_label, "success" if assessment_complete else "warning"),
+    )
+    render_context_bar(
+        {
+            "Study": st.session_state.get("study_id") or "Not named",
+            "Virus": st.session_state.get("virus") or "Not specified",
+            "Endpoint": ENDPOINTS_BY_KEY[current_endpoint].label,
+            "Pathway": (
+                current_path_definition.testing_strategy
+                if current_path_definition
+                else "Not selected"
+            ),
+            "Status": status_label,
+        }
+    )
+    endpoint_tab, study_tab, appraisal_tab, review_tab = render_workflow_steps(
+        (
+            "1 · Endpoint",
+            "2 · Study & evidence",
+            "3 · Domain appraisal",
+            "4 · Review & export",
+        )
+    )
+    with endpoint_tab:
+        endpoint_key, pathway, verification_design, synthesis_path_key = endpoint_controls()
+    with study_tab:
+        _, metadata = document_intake(
+            pathway, endpoint_key, verification_design, synthesis_path_key
+        )
+    with appraisal_tab:
+        scores, comments = assessment_form(pathway, endpoint_key)
+    with review_tab:
+        single_results(
+            metadata,
+            endpoint_key,
+            pathway,
+            verification_design,
+            scores,
+            comments,
+        )
 
 
 def import_records(uploaded_files: list[Any]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -2841,117 +3538,243 @@ def calculate_batch(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def appraiser_page() -> None:
-    hero()
-    st.markdown("Combine assessments, enter batches, inspect domain patterns, and export synthesis-ready tables. DARE scores remain endpoint-specific and continuous.")
-
-    st.subheader("Import completed Assessor outputs or DARE workbook")
-    import_files = st.file_uploader(
-        "Upload one or more DARE-Arbo CSV, JSON, or XLSX files",
-        type=["csv", "json", "xlsx", "xls"],
-        accept_multiple_files=True,
-        key="appraiser_imports",
-    )
-    if import_files and st.button("Add imported records to registry"):
-        records, errors = import_records(import_files)
-        st.session_state["registry"].extend(records)
-        if records:
-            st.success(f"Added {len(records)} record(s).")
-        for error in errors:
-            st.error(error)
-
     registry = st.session_state.get("registry", [])
-    if registry:
-        with st.expander(f"In-session Assessor registry ({len(registry)} records)", expanded=True):
-            registry_df = pd.DataFrame(registry)
-            preferred = [column for column in [
-                "study_id", "assessor_id", "assessment_started_at_utc",
-                "assessment_completed_at_utc", "assessment_elapsed_minutes",
-                "virus", "target_population_category", "sampling_frame_category",
-                "endpoint_label", "synthesis_tier", "dare_total",
-                "dare_applicable_maximum", "dare_complete",
-            ] if column in registry_df.columns]
-            st.dataframe(registry_df[preferred] if preferred else registry_df, use_container_width=True, hide_index=True)
-            registry_cols = st.columns([1, 1, 1.45, 1])
-            registry_cols[0].download_button("Download registry CSV", registry_df.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_registry.csv", "text/csv", use_container_width=True)
-            registry_cols[1].download_button("Download registry JSON", json.dumps(registry, ensure_ascii=False, indent=2, default=str).encode("utf-8"), "DARE-Arbo_registry.json", "application/json", use_container_width=True)
-            registry_cols[2].button(
-                "Generate batch appraisal",
-                on_click=generate_batch_from_registry,
-                help="Replace the current batch grid with all records in this registry and calculate the outputs below.",
-                use_container_width=True,
-            )
-            if registry_cols[3].button("Clear registry", use_container_width=True):
-                st.session_state["registry"] = []
-                st.rerun()
+    batch_state = st.session_state.get("batch_grid", pd.DataFrame())
+    populated_rows = (
+        int(batch_state.get("Study ID", pd.Series(dtype=str)).astype(str).str.strip().ne("").sum())
+        if isinstance(batch_state, pd.DataFrame)
+        else 0
+    )
+    render_workspace_header(
+        "DARE-Arbo Appraiser",
+        "Multi-study registry, structured batch appraisal, and synthesis-ready quality outputs.",
+        status=(f"{populated_rows} batch records", "info"),
+    )
+    render_context_bar(
+        {
+            "Workspace": "Batch appraisal",
+            "Registry": f"{len(registry)} records",
+            "Batch": f"{populated_rows} populated rows",
+            "Unit": "Study–virus–estimand",
+            "Status": "Ready for review" if populated_rows else "Awaiting records",
+        }
+    )
+    intake_tab, batch_tab, results_tab = render_workflow_steps(
+        ("1 · Import & registry", "2 · Rapid batch entry", "3 · Results & exports")
+    )
 
-    loaded_count = st.session_state.get("registry_batch_loaded_count", 0)
-    if loaded_count:
-        st.success(f"Batch grid populated from {loaded_count} in-session Assessor record(s). Review the rows, then use the generated outputs below.")
-
-    batch_pdf_intake()
-    batch = batch_editor()
-    details, long_items = calculate_batch(batch)
-    st.subheader("Batch appraisal outputs")
-    if details.empty:
-        st.info("Add at least one Study ID to calculate batch outputs.")
-        return
-
-    st.dataframe(details, use_container_width=True, hide_index=True)
-    incomplete_count = int((~details["Complete"]).sum())
-    if incomplete_count:
-        st.warning(f"{incomplete_count} batch row(s) are incomplete. Missing applicable items contribute zero to the displayed draft totals.")
-
-    if not long_items.empty:
-        heatmap = (
-            alt.Chart(long_items)
-            .mark_rect(stroke="white", strokeWidth=1)
-            .encode(
-                x=alt.X("Criterion:N", sort=[criterion.code for criterion in CRITERIA], title=None),
-                y=alt.Y("Study ID:N", title=None),
-                color=alt.Color(
-                    "Attainment:Q",
-                    scale=alt.Scale(domain=[0, 50, 100], range=["#e45b16", "#f2d9c8", "#18864b"]),
-                    title="Point attainment (%)",
-                ),
-                tooltip=["Study ID", "Criterion", "Score", "Maximum"],
-            )
-            .properties(height=max(130, 36 * details.shape[0]))
+    with intake_tab:
+        render_section_header(
+            "01",
+            "Import completed appraisals",
+            "Add Assessor exports or the DARE workbook, then generate a batch from the in-session registry.",
         )
-        st.altair_chart(heatmap, use_container_width=True)
-        st.caption("Colors show descriptive point attainment within each criterion. They are not DARE low/unclear/high risk categories.")
+        import_files = st.file_uploader(
+            "Upload one or more DARE-Arbo CSV, JSON, or XLSX files",
+            type=["csv", "json", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key="appraiser_imports",
+        )
+        if import_files and st.button("Add imported records to registry"):
+            records, errors = import_records(import_files)
+            st.session_state["registry"].extend(records)
+            if records:
+                st.success(f"Added {len(records)} record(s).")
+            for error in errors:
+                st.error(error)
 
-    export_cols = st.columns(3)
-    export_cols[0].download_button("Download batch details", details.to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_batch_details.csv", "text/csv", use_container_width=True)
-    summary_columns = [
-        "Study ID", "Assessor ID", "Assessment started (UTC)",
-        "Assessment completed (UTC)", "Assessment duration (minutes)",
-        "Citation or DOI", "Virus", "Target population", "Target-population category",
-        "Sampling frame / source population", "Sampling-frame category", "Target-frame matrix status", "Target-frame matrix rationale", "Sampling/recruitment method", "Endpoint",
-        "Endpoint structure", "Primary assay", "Confirmatory assay", "Assay role", "Confirmation role", "Confirmation coverage", "Testing strategy", "Assay type",
-        "Summary estimator", "Numerator provenance",
-        "Synthesis tier", "Effective synthesis tier", "Synthesis eligibility",
-        "Numerator rule", "Denominator rule", "False-positive rule",
-        "Total recruited", "Total tested", "Tested / recruited completion",
-        "Planned verification N", "Endpoint tested N", "Endpoint positive n", "Endpoint-test positivity",
-        "Synthesis denominator N", "Synthesis prevalence",
-        "False positives n", "False negatives n",
-        "Staged planned-pathway completion", "Q5 limiting completion", "Q5 completion basis",
-        "Planned-pathway completion", "Estimator ready", "Missing estimator quantities",
-        "Validation sensitivity", "Validation specificity",
-        "Counts valid", "Counts complete", "DARE total", "Applicable maximum",
-        "Complete", "Selection-domain zero items", "Measurement-domain zero items",
-    ]
-    export_cols[1].download_button("Download synthesis summary", details[summary_columns].to_csv(index=False).encode("utf-8-sig"), "DARE-Arbo_synthesis_summary.csv", "text/csv", use_container_width=True)
-    export_cols[2].download_button("Download batch JSON", details.to_json(orient="records", indent=2, force_ascii=False).encode("utf-8"), "DARE-Arbo_batch_details.json", "application/json", use_container_width=True)
+        registry = st.session_state.get("registry", [])
+        if registry:
+            with st.expander(
+                f"In-session Assessor registry ({len(registry)} records)",
+                expanded=True,
+            ):
+                registry_df = pd.DataFrame(registry)
+                preferred = [column for column in [
+                    "study_id", "assessor_id", "assessment_started_at_utc",
+                    "assessment_completed_at_utc", "assessment_elapsed_minutes",
+                    "virus", "target_population_category", "sampling_frame_category",
+                    "endpoint_label", "synthesis_tier", "dare_total",
+                    "dare_applicable_maximum", "dare_complete",
+                ] if column in registry_df.columns]
+                st.dataframe(
+                    registry_df[preferred] if preferred else registry_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                registry_cols = st.columns([1, 1, 1.45, 1])
+                registry_cols[0].download_button(
+                    "Download registry CSV",
+                    registry_df.to_csv(index=False).encode("utf-8-sig"),
+                    "DARE-Arbo_registry.csv",
+                    "text/csv",
+                    use_container_width=True,
+                )
+                registry_cols[1].download_button(
+                    "Download registry JSON",
+                    json.dumps(registry, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+                    "DARE-Arbo_registry.json",
+                    "application/json",
+                    use_container_width=True,
+                )
+                registry_cols[2].button(
+                    "Generate batch appraisal",
+                    on_click=generate_batch_from_registry,
+                    help="Replace the current batch grid with all records in this registry and calculate the outputs below.",
+                    use_container_width=True,
+                )
+                if registry_cols[3].button("Clear registry", use_container_width=True):
+                    st.session_state["registry"] = []
+                    st.rerun()
+
+        loaded_count = st.session_state.get("registry_batch_loaded_count", 0)
+        if loaded_count:
+            st.success(
+                f"Batch grid populated from {loaded_count} in-session Assessor record(s). "
+                "Review the rows in Rapid batch entry."
+            )
+
+    with batch_tab:
+        render_section_header(
+            "02",
+            "Curate batch records",
+            "Extract draft records from PDFs or add, edit, and delete structured rows before calculation.",
+        )
+        batch_pdf_intake()
+        batch = batch_editor()
+
+    with results_tab:
+        render_section_header(
+            "03",
+            "Review batch outputs",
+            "Inspect endpoint-specific totals and item patterns, then download synthesis-ready files.",
+        )
+        details, long_items = calculate_batch(batch)
+        if details.empty:
+            st.info("Add at least one Study ID to calculate batch outputs.")
+            return
+
+        st.dataframe(details, use_container_width=True, hide_index=True)
+        incomplete_count = int((~details["Complete"]).sum())
+        if incomplete_count:
+            st.warning(
+                f"{incomplete_count} batch row(s) are incomplete. Missing applicable "
+                "items contribute zero to the displayed draft totals."
+            )
+
+        if not long_items.empty:
+            heatmap = (
+                alt.Chart(long_items)
+                .mark_rect(stroke="white", strokeWidth=1)
+                .encode(
+                    x=alt.X("Criterion:N", sort=[criterion.code for criterion in CRITERIA], title=None),
+                    y=alt.Y("Study ID:N", title=None),
+                    color=alt.Color(
+                        "Attainment:Q",
+                        scale=alt.Scale(domain=[0, 50, 100], range=["#e45b16", "#f2d9c8", "#18864b"]),
+                        title="Point attainment (%)",
+                    ),
+                    tooltip=["Study ID", "Criterion", "Score", "Maximum"],
+                )
+                .properties(height=max(130, 36 * details.shape[0]))
+            )
+            st.altair_chart(heatmap, use_container_width=True)
+            st.caption(
+                "Colors show descriptive point attainment within each criterion. "
+                "They are not DARE low/unclear/high risk categories."
+            )
+
+        export_cols = st.columns(3)
+        export_cols[0].download_button(
+            "Download batch details",
+            details.to_csv(index=False).encode("utf-8-sig"),
+            "DARE-Arbo_batch_details.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+        summary_columns = [
+            "Study ID", "Assessor ID", "Assessment started (UTC)",
+            "Assessment completed (UTC)", "Assessment duration (minutes)",
+            "Citation or DOI", "Virus", "Target population", "Target-population category",
+            "Sampling frame / source population", "Sampling-frame category", "Target-frame matrix status", "Target-frame matrix rationale", "Sampling/recruitment method", "Endpoint",
+            "Endpoint structure", "Primary assay", "Confirmatory assay", "Assay role", "Confirmation role", "Confirmation coverage", "Testing strategy", "Assay type",
+            "Summary estimator", "Numerator provenance", "Synthesis tier", "Effective synthesis tier", "Synthesis eligibility",
+            "Numerator rule", "Denominator rule", "False-positive rule", "Total recruited", "Total tested", "Tested / recruited completion",
+            "Planned verification N", "Endpoint tested N", "Endpoint positive n", "Endpoint-test positivity", "Synthesis denominator N", "Synthesis prevalence",
+            "False positives n", "False negatives n", "Staged planned-pathway completion", "Q5 limiting completion", "Q5 completion basis",
+            "Planned-pathway completion", "Estimator ready", "Missing estimator quantities", "Validation sensitivity", "Validation specificity",
+            "Counts valid", "Counts complete", "DARE total", "Applicable maximum", "Complete", "Selection-domain zero items", "Measurement-domain zero items",
+        ]
+        export_cols[1].download_button(
+            "Download synthesis summary",
+            details[summary_columns].to_csv(index=False).encode("utf-8-sig"),
+            "DARE-Arbo_synthesis_summary.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+        export_cols[2].download_button(
+            "Download batch JSON",
+            details.to_json(orient="records", indent=2, force_ascii=False).encode("utf-8"),
+            "DARE-Arbo_batch_details.json",
+            "application/json",
+            use_container_width=True,
+        )
 
 
 def study_designer_page() -> None:
-    hero()
+    current_designer_path = str(
+        st.session_state.get("designer_path") or "serology_apparent"
+    )
+    current_designer_path_definition = SYNTHESIS_PATHS_BY_KEY.get(
+        current_designer_path
+    )
+    selected_designer_viruses = st.session_state.get("designer_viruses", [])
+    current_virus = (
+        "; ".join(selected_designer_viruses)
+        if selected_designer_viruses
+        else st.session_state.get("designer_virus") or "Not specified"
+    )
+    render_workspace_header(
+        "DARE-Arbo Surveillance Study Designer",
+        "Protocol-oriented planning across study design, assay design, and standard reporting.",
+        status=("Planning workspace", "info"),
+    )
+    render_context_bar(
+        {
+            "Study": st.session_state.get("designer_study_title") or "Untitled protocol",
+            "Virus": current_virus,
+            "Endpoint": (
+                ENDPOINTS_BY_KEY[current_designer_path_definition.endpoint_key].label
+                if current_designer_path_definition
+                else "Not selected"
+            ),
+            "Pathway": (
+                current_designer_path_definition.testing_strategy
+                if current_designer_path_definition
+                else "Not selected"
+            ),
+            "Status": "Draft design",
+        }
+    )
     st.markdown(
-        "Design one study-virus-estimand pathway that explicitly connects population coverage, assay architecture, estimator-ready counts, and reproducible reporting. This planner supports protocol development; it is not a completed risk-of-bias appraisal."
+        """
+        <nav class="dare-assay-path" aria-label="Designer workflow">
+          <a class="dare-path-node" href="#designer-objective">1 · Objective</a>
+          <span class="dare-path-arrow" aria-hidden="true">→</span>
+          <a class="dare-path-node" href="#designer-pillars">2 · Planning pillars</a>
+          <span class="dare-path-arrow" aria-hidden="true">→</span>
+          <a class="dare-path-node" href="#designer-review">3 · Review & downloads</a>
+        </nav>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.subheader("1. Define the surveillance objective")
+    st.markdown('<span id="designer-objective"></span>', unsafe_allow_html=True)
+    render_section_header(
+        "01",
+        "Define the surveillance objective",
+        "Specify the target population, surveillance architecture, virus coverage, and endpoint-specific analysis pathways.",
+    )
     objective_left, objective_right = st.columns([1, 1.15])
     with objective_left:
         study_title = st.text_input(
@@ -3142,7 +3965,12 @@ def study_designer_page() -> None:
                         f"{selected_path.summary_estimator}"
                     )
 
-    st.subheader("2. Balance the three planning pillars")
+    st.markdown('<span id="designer-pillars"></span>', unsafe_allow_html=True)
+    render_section_header(
+        "02",
+        "Balance the three planning pillars",
+        "Complete the population, assay, and reporting commitments required for a reproducible design.",
+    )
     design_tab, assay_tab, reporting_tab = st.tabs(
         ("Study design", "Assay design", "Standard reporting")
     )
@@ -3443,18 +4271,16 @@ def study_designer_page() -> None:
         ]
     readiness.setdefault("analysis_unit_count", len(readiness["analysis_units"]))
 
-    st.subheader("3. Planning balance and design figure")
-    metric_cols = st.columns(5)
-    for column, pillar in zip(metric_cols[:3], readiness["pillars"]):
-        result = readiness["pillars"][pillar]
-        column.metric(pillar, f"{result['percentage']:.0f}%")
-    metric_cols[3].metric("Coverage floor", f"{readiness['balance_floor']:.0f}%")
-    metric_cols[4].metric("Analysis outputs", readiness["analysis_unit_count"])
+    st.markdown('<span id="designer-review"></span>', unsafe_allow_html=True)
+    render_section_header(
+        "03",
+        "Review readiness and download the design",
+        "Resolve planning priorities, inspect the study–virus–estimand outputs, and export the protocol record.",
+    )
+    render_readiness_panel(readiness)
     st.caption(
         "Percentages describe completion/strength of the listed planning elements. They are not DARE-Arbo risk-of-bias scores and should not be interpreted as study-quality categories."
     )
-    for pillar, result in readiness["pillars"].items():
-        st.progress(result["percentage"] / 100, text=f"{pillar}: {result['percentage']:.0f}% planning coverage")
     if readiness["recommendations"]:
         with st.expander("Planning priorities", expanded=True):
             for recommendation in readiness["recommendations"]:
@@ -3463,21 +4289,7 @@ def study_designer_page() -> None:
         st.caption(
             "Each row retains its own endpoint-defining assay pathway, observed numerator, denominator, and estimator. Hybrid streams are separate only when the selected analysis plan requests separate estimates."
         )
-        st.dataframe(
-            pd.DataFrame(readiness["analysis_units"])[
-                [
-                    "surveillance_stream",
-                    "virus",
-                    "endpoint",
-                    "testing_strategy",
-                    "numerator",
-                    "denominator",
-                    "summary_estimator",
-                ]
-            ],
-            hide_index=True,
-            use_container_width=True,
-        )
+        render_analysis_unit_table(readiness)
 
     presentation_colors = overview_color_controls()
     branding_logo = LOGO_PATH.read_bytes() if LOGO_PATH.exists() else None
@@ -3550,7 +4362,20 @@ def study_designer_page() -> None:
 
 
 def framework_page() -> None:
-    hero()
+    render_workspace_header(
+        "DARE-Arbo Framework Reference",
+        "Endpoint applicability, criterion structure, synthesis pathways, and interpretation guardrails.",
+        status=(GUIDE_VERSION, "info"),
+    )
+    render_context_bar(
+        {
+            "Reference": "Application principle",
+            "Criteria": "Q1–Q10 / 12 items",
+            "Maximum": "Endpoint-specific · 18 or 19",
+            "Unit": "Study–virus–estimand",
+            "Status": "Read-only reference",
+        }
+    )
     st.markdown("The implementation below follows the audited DARE-Arbo guide in this workspace. It separates endpoint classification from methodological scoring.")
     st.subheader("Scoring structure")
     rows = []
@@ -3625,7 +4450,7 @@ def about_page() -> None:
     st.subheader("Privacy and deployment")
     st.markdown(
         """
-        The app processes uploaded PDFs in memory and does not persist them by default.
+        The app processes uploaded PDFs in memory and does not persist them by default. For public deployment, use a controlled Streamlit host, HTTPS, an access policy appropriate to the documents being reviewed, and a private storage/database layer only if persistent projects are required.
 
         Local launch:
 
@@ -3708,7 +4533,9 @@ def main() -> None:
     configure_page()
     initialize_state()
     page = sidebar()
-    if page == "Assessor":
+    if page == "Home":
+        landing_page()
+    elif page == "Assessor":
         assessor_page()
     elif page == "Appraiser":
         appraiser_page()
@@ -3718,7 +4545,8 @@ def main() -> None:
         framework_page()
     else:
         about_page()
-    feedback_panel(page)
+    if page in {"Home", "About & deployment"}:
+        feedback_panel(page)
 
 
 if __name__ == "__main__":
