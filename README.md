@@ -15,16 +15,6 @@ This directory contains one consolidated Streamlit application that operationali
 
 DARE-Arbo totals are continuous methodological-quality scores. The application does not invent low/moderate/high bands. Q10 applies to prior-exposure / antibody-seroprevalence, IgM, and NS1 endpoints, producing an applicable maximum of 19. Mixed/inseparable serology, neutralizing-antibody prevalence, confirmed direct detection, assay-performance, and other explicitly defined endpoints record Q10 as N/A and have an applicable maximum of 18.
 
-## Run locally
-
-From this directory:
-
-```powershell
-python -m pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-
-The legacy entry points `risk_bias_assesor.py` and `risk_of_bias_scoring.py` now open the same consolidated application.
 
 ## Designer report architecture
 
@@ -37,22 +27,11 @@ The Designer report keeps planning logic and presentation separate:
 
 Planning coverage in this report is a documentation-completeness indicator. It is not a risk-of-bias, methodological-validity, or study-quality score.
 
-## Test the rule engine
-
-```powershell
-python -m unittest discover -s tests -v
-```
 
 ## PDF behavior and privacy
 
 Uploaded PDFs are processed in memory and are not persisted by the app. Text-based PDFs work directly. Image-only/scanned articles require OCR before upload. Evidence suggestions use explicit, local rules and page-aware text matches; they are drafts that reviewers must verify against the article, tables, supplements, and stated target population.
 
-## Primary framework sources in this directory
-
-- `DARE_Arbo_Design_library.xlsx` - 2026-09-10 controlled target, frame, recruitment, Q1/Q3/Q4, matrix, and worked-example library.
-- `DARE-Arbo_application_principle.docx` - endpoint-first assay roles, measurement pathways, confirmation coverage, and Q1-Q10 application rules.
-- `DARE_Arbo_workbook.xlsx` - legacy audited study-level scoring structure and examples retained for compatibility.
-- `DARE-Arbo_manuscript.docx` - framework rationale and methods description.
 
 ## Citation
 
