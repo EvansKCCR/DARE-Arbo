@@ -54,3 +54,10 @@ Uploaded PDFs are processed in memory and are not persisted by the app. Text-bas
 - `DARE_Arbo_workbook.xlsx` - legacy audited study-level scoring structure and examples retained for compatibility.
 - `DARE-Arbo_manuscript.docx` - framework rationale and methods description.
 
+## Citation
+
+- Adu, E.A., Amuasi, J.H., Alani, H. et al. (Sero)prevalence of (re)emerging major arbovirus infections in Africa: a systematic review and meta-analysis protocol. Syst Rev 15, 97 (2026). https://doi.org/10.1186/s13643-025-02879-z
+
+## License
+
+Please refer to the repository license for terms governing the use and redistribution of the source code and datasets.
