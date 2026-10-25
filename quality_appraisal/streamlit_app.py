@@ -82,6 +82,15 @@ from document_intelligence import (
     UNRESOLVED as DOCUMENT_UNRESOLVED,
     parse_pdf_bundle,
 )
+from paper_assistant import (
+    ASSISTANT_VERSION as PAPER_ASSISTANT_VERSION,
+    SYSTEM_INSTRUCTION as PAPER_ASSISTANT_SYSTEM_INSTRUCTION,
+    SUGGESTED_QUESTIONS as PAPER_ASSISTANT_CATEGORIES,
+    answer_question as answer_paper_question,
+    source_page_chunks,
+    suggested_questions as paper_suggested_questions,
+    summarize_paper,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -223,14 +232,17 @@ def cached_document_model(
     main_pdf: bytes,
     main_name: str,
     supplements: tuple[tuple[str, bytes], ...],
+    engine_version: str,
 ) -> dict[str, Any]:
     """Parse a PDF bundle once and cache the serializable shared evidence model."""
-    return parse_pdf_bundle(
+    payload = parse_pdf_bundle(
         main_pdf,
         main_name,
         supplements,
         rule_version=GUIDE_VERSION,
     ).to_dict(include_pages=True)
+    payload["cache_engine_version"] = engine_version
+    return payload
 
 
 def _safe_ui_text(value: Any, fallback: str = "Not specified") -> str:
@@ -1203,6 +1215,7 @@ def initialize_state() -> None:
     defaults: dict[str, Any] = {
         "pdf_hash": None,
         "pdf_result": None,
+        "assessor_pdf_model": None,
         "suggestions": {},
         "pending_citation_autofill": None,
         "citation_autofilled_value": "",
@@ -1230,6 +1243,8 @@ def initialize_state() -> None:
         "appraiser_pdf_candidate_id": "",
         "appraiser_pdf_overrides": {},
         "appraiser_pdf_review_notice": "",
+        "paper_assistant_conversations": {},
+        "paper_assistant_source_view": {},
         "single_endpoint": ENDPOINTS[0].key,
         "single_pathway": ENDPOINTS[0].default_pathway,
         "verification_design": "full_population",
@@ -1458,6 +1473,7 @@ def reset_single_assessment() -> None:
         st.session_state[f"comment_{criterion.code}"] = ""
     st.session_state["pdf_hash"] = None
     st.session_state["pdf_result"] = None
+    st.session_state["assessor_pdf_model"] = None
     st.session_state["suggestions"] = {}
     st.session_state["pending_citation_autofill"] = None
     st.session_state["citation_autofilled_value"] = ""
@@ -2127,7 +2143,23 @@ def document_intake(
                 rerun_for_identifier = False
                 try:
                     with st.spinner("Extracting page-aware evidence…"):
-                        extracted = extract_pdf_text(pdf_bytes)
+                        shared_model = cached_document_model(
+                            pdf_bytes, uploaded_pdf.name, (), DOCUMENT_ENGINE_VERSION
+                        )
+                        main_source = next(
+                            (
+                                source for source in shared_model.get("sources", [])
+                                if source.get("kind") == "main"
+                            ),
+                            shared_model.get("sources", [{}])[0],
+                        )
+                        extracted = {
+                            "pages": shared_model.get("pages", []),
+                            "metadata": main_source.get("metadata", {}),
+                            "page_count": main_source.get("page_count", 0),
+                            "character_count": main_source.get("character_count", 0),
+                            "scanned_or_empty": main_source.get("scanned_or_empty", False),
+                        }
                         bibliographic_identifier = extract_citation_or_doi(
                             extracted["pages"], extracted.get("metadata")
                         )
@@ -2148,6 +2180,7 @@ def document_intake(
                         )
                     st.session_state["pdf_hash"] = file_hash
                     st.session_state["pdf_result"] = extracted
+                    st.session_state["assessor_pdf_model"] = shared_model
                     st.session_state["suggestions"] = suggestions
                     if bibliographic_identifier["value"]:
                         st.session_state["pending_citation_autofill"] = bibliographic_identifier
@@ -2696,6 +2729,21 @@ def assessor_page() -> None:
         _, metadata = document_intake(
             pathway, endpoint_key, verification_design, synthesis_path_key
         )
+        assessor_model = st.session_state.get("assessor_pdf_model")
+        if assessor_model:
+            matching_candidates = [
+                candidate for candidate in assessor_model.get("candidates", [])
+                if candidate.get("endpoint_key") == endpoint_key
+            ]
+            preferred_candidate_id = (
+                matching_candidates[0].get("candidate_id", "")
+                if matching_candidates else ""
+            )
+            render_paper_assistant(
+                assessor_model,
+                preferred_candidate_id=preferred_candidate_id,
+                panel_key="assessor_paper_assistant",
+            )
     with appraisal_tab:
         scores, comments = assessment_form(pathway, endpoint_key)
     with review_tab:
@@ -3395,9 +3443,236 @@ def _render_pdf_evidence_item(label: str, item: dict[str, Any]) -> None:
     st.markdown(f"**{label}**  \n{value}")
     st.caption(f"{confidence} confidence · {inference} · {_evidence_location_text(item)}")
     if item.get("evidence_text"):
-        st.markdown(f"> {item['evidence_text']}")
+        st.code(str(item["evidence_text"]), language=None, wrap_lines=True)
     if item.get("conflicts"):
         st.warning("Conflicting candidate values were detected. Review the alternatives before finalizing.")
+
+
+def render_paper_assistant(
+    model: dict[str, Any],
+    preferred_candidate_id: str = "",
+    panel_key: str = "paper_assistant",
+) -> None:
+    """Render the constrained document-only Paper Assistant panel."""
+    candidates = model.get("candidates", [])
+    if not candidates:
+        return
+    document_id = str(model.get("document_id") or "unknown-document")
+    candidate_ids = [candidate["candidate_id"] for candidate in candidates]
+    default_index = (
+        candidate_ids.index(preferred_candidate_id)
+        if preferred_candidate_id in candidate_ids else 0
+    )
+    widget_prefix = f"{panel_key}_{document_id[:12]}"
+    with st.expander("DARE-Arbo Paper Assistant · Ask this paper", expanded=False):
+        st.caption(
+            "Ask methodological questions about the uploaded paper. Responses are restricted "
+            "to this article and its uploaded supplements and are linked to DARE-Arbo concepts."
+        )
+        candidate_labels = {
+            candidate["candidate_id"]: (
+                f"{candidate.get('virus', 'Virus unresolved')} · "
+                f"{candidate.get('endpoint_label', 'Endpoint unresolved')} · "
+                f"{candidate.get('fields', {}).get('primary_assay', {}).get('final_value', DOCUMENT_UNRESOLVED)}"
+            )
+            for candidate in candidates
+        }
+        active_candidate_id = st.selectbox(
+            "Asking about",
+            candidate_ids,
+            index=default_index,
+            format_func=lambda value: candidate_labels[value],
+            key=f"{widget_prefix}_candidate",
+            help="Endpoint-specific evidence is isolated. Article-level evidence may be shared when appropriate.",
+        )
+        active_candidate = next(
+            candidate for candidate in candidates
+            if candidate["candidate_id"] == active_candidate_id
+        )
+        context_cols = st.columns([1, 1])
+        category = context_cols[0].selectbox(
+            "Question category",
+            list(PAPER_ASSISTANT_CATEGORIES),
+            key=f"{widget_prefix}_category",
+        )
+        criterion_context = context_cols[1].selectbox(
+            "Criterion context (optional)",
+            ("None", *[criterion.code for criterion in CRITERIA]),
+            key=f"{widget_prefix}_criterion",
+        )
+        guided_questions = paper_suggested_questions(
+            category, "" if criterion_context == "None" else criterion_context
+        )
+        guided_question = st.selectbox(
+            "Guided question",
+            guided_questions,
+            key=f"{widget_prefix}_guided",
+        )
+        free_question = st.text_input(
+            "Ask a DARE-Arbo question about this paper",
+            placeholder="For example: Was confirmation applied to all screening-positive specimens?",
+            key=f"{widget_prefix}_free_question",
+        )
+        action_cols = st.columns([1, 1, 1])
+        summarize_clicked = action_cols[0].button(
+            "Summarize paper for DARE-Arbo",
+            use_container_width=True,
+            key=f"{widget_prefix}_summary",
+        )
+        guided_clicked = action_cols[1].button(
+            "Ask guided question",
+            use_container_width=True,
+            key=f"{widget_prefix}_ask_guided",
+        )
+        free_clicked = action_cols[2].button(
+            "Ask typed question",
+            use_container_width=True,
+            disabled=not free_question.strip(),
+            key=f"{widget_prefix}_ask_free",
+        )
+
+        conversation_store = st.session_state.setdefault(
+            "paper_assistant_conversations", {}
+        )
+        conversation_key = f"{document_id}:{active_candidate_id}"
+        conversation = conversation_store.setdefault(conversation_key, [])
+        if summarize_clicked:
+            conversation.append(
+                {
+                    "kind": "summary",
+                    "question": "Summarize paper for DARE-Arbo",
+                    "summary": summarize_paper(model, active_candidate_id),
+                    "created_at_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        elif guided_clicked or free_clicked:
+            question = free_question.strip() if free_clicked else guided_question
+            response = answer_paper_question(model, active_candidate_id, question)
+            conversation.append(
+                {
+                    "kind": "answer",
+                    "question": question,
+                    "response": response.to_dict(),
+                    "created_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "document_id": document_id,
+                    "candidate_id": active_candidate_id,
+                    "assistant_version": PAPER_ASSISTANT_VERSION,
+                }
+            )
+        st.session_state["paper_assistant_conversations"] = conversation_store
+
+        if not conversation:
+            st.info(
+                "Choose a guided question or ask a constrained free-text question. "
+                "The assistant has no web access and does not use general scientific knowledge."
+            )
+        for turn_index, turn in enumerate(conversation[-6:], start=max(1, len(conversation) - 5)):
+            st.markdown(f"#### {turn.get('question', 'Paper question')}")
+            if turn.get("kind") == "summary":
+                summary = turn.get("summary", {})
+                rows = summary.get("rows", [])
+                if rows:
+                    st.dataframe(
+                        pd.DataFrame(rows)[["section", "field", "value"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                gaps = summary.get("reporting_gaps", [])
+                if gaps:
+                    st.markdown("**Key reporting gaps / reviewer attention**")
+                    for gap in gaps:
+                        st.markdown(f"- {gap}")
+                summary_citations = summary.get("citations", [])
+                if summary_citations:
+                    st.markdown("**Sources**")
+                    for source_index, citation in enumerate(summary_citations[:8]):
+                        location = " · ".join(
+                            value for value in (
+                                citation.get("document", ""),
+                                citation.get("section", ""),
+                                f"p. {citation.get('page')}" if citation.get("page") else "",
+                            ) if value
+                        )
+                        if st.button(
+                            f"View {location}",
+                            key=f"{widget_prefix}_summary_source_{turn_index}_{source_index}",
+                        ):
+                            st.session_state["paper_assistant_source_view"][document_id] = {
+                                "document": citation.get("document"),
+                                "page": citation.get("page"),
+                            }
+            else:
+                response = turn.get("response", {})
+                st.markdown("**Finding**")
+                st.write(response.get("finding", DOCUMENT_UNRESOLVED))
+                evidence = response.get("evidence", [])
+                if evidence:
+                    st.markdown("**Evidence from the uploaded paper**")
+                    for source_index, citation in enumerate(evidence):
+                        location = " · ".join(
+                            value for value in (
+                                citation.get("document", ""),
+                                citation.get("section", ""),
+                                f"p. {citation.get('page')}" if citation.get("page") else "",
+                            ) if value
+                        )
+                        st.caption(location)
+                        st.code(str(citation.get("excerpt", "")), language=None, wrap_lines=True)
+                        if st.button(
+                            f"View source · {citation.get('document', 'article')} · p. {citation.get('page', '?')}",
+                            key=f"{widget_prefix}_answer_source_{turn_index}_{source_index}",
+                        ):
+                            st.session_state["paper_assistant_source_view"][document_id] = {
+                                "document": citation.get("document"),
+                                "page": citation.get("page"),
+                            }
+                if response.get("relevance"):
+                    st.markdown("**DARE-Arbo relevance**")
+                    st.write(response["relevance"])
+                st.caption(
+                    f"Evidence confidence: {response.get('confidence', 'UNRESOLVED')} · "
+                    f"Scope: {response.get('scope_status', 'UNKNOWN')}"
+                )
+                for conflict in response.get("conflicts", []):
+                    st.warning(
+                        f"Potential discrepancy: {conflict.get('reason', 'Conflicting evidence detected')} "
+                        f"Candidates: {conflict.get('candidates', [])}"
+                    )
+                if response.get("potential_update"):
+                    st.warning(
+                        "Potential update — "
+                        + response["potential_update"].get("message", "Review the source evidence.")
+                    )
+                    st.caption("No extracted value or appraisal score has been changed.")
+            st.divider()
+
+        source_view = st.session_state.get("paper_assistant_source_view", {}).get(document_id)
+        if source_view:
+            source_chunks = source_page_chunks(
+                model, source_view.get("document", ""), source_view.get("page", 0)
+            )
+            st.markdown(
+                f"#### Source page preview · {source_view.get('document')} · p. {source_view.get('page')}"
+            )
+            if source_chunks:
+                for chunk in source_chunks:
+                    st.caption(chunk.get("section", "Unclassified section"))
+                    st.code(str(chunk.get("text", "")), language=None, wrap_lines=True)
+            else:
+                st.info("The selected source page has no extractable text chunks.")
+
+        with st.expander("Grounding and privacy controls"):
+            st.markdown(
+                "- Source context: only this PDF bundle and its structured evidence.\n"
+                "- Rule context: DARE-Arbo terminology only; it cannot supply missing study facts.\n"
+                "- External retrieval: disabled.\n"
+                "- PDF text is treated as untrusted evidence, never as instructions.\n"
+                "- Conversation memory is isolated by document hash and endpoint record.\n"
+                "- Answers never update extraction or appraisal state automatically."
+            )
+            st.caption(
+                f"Paper Assistant {PAPER_ASSISTANT_VERSION}. The dedicated control instruction is retained for validation; no hidden reasoning is stored."
+            )
 
 
 def batch_pdf_intake() -> None:
@@ -3427,7 +3702,8 @@ def batch_pdf_intake() -> None:
                 )
                 with st.spinner("Reading the complete article and reconstructing endpoint candidates…"):
                     model = cached_document_model(
-                        main_pdf.getvalue(), main_pdf.name, supplement_payload
+                        main_pdf.getvalue(), main_pdf.name, supplement_payload,
+                        DOCUMENT_ENGINE_VERSION,
                     )
                 st.session_state["appraiser_pdf_model"] = model
                 st.session_state["appraiser_pdf_candidate_id"] = (
@@ -3553,7 +3829,7 @@ def batch_pdf_intake() -> None:
                     if q_items:
                         for item in q_items:
                             st.caption(_evidence_location_text(item))
-                            st.markdown(f"> {item.get('evidence_text', '')}")
+                            st.code(str(item.get("evidence_text", "")), language=None, wrap_lines=True)
                     else:
                         st.info("Could not be established from the article. No positive finding has been inferred.")
         with override_tab:
@@ -3602,6 +3878,12 @@ def batch_pdf_intake() -> None:
                 st.session_state["appraiser_pdf_overrides"] = all_overrides
                 st.session_state["appraiser_pdf_review_notice"] = f"Saved reviewer decision for {field_labels[editable_field]}."
                 st.rerun()
+
+        render_paper_assistant(
+            model,
+            preferred_candidate_id=selected_id,
+            panel_key="appraiser_paper_assistant",
+        )
 
         if st.session_state.get("appraiser_pdf_review_notice"):
             st.success(st.session_state["appraiser_pdf_review_notice"])

@@ -100,6 +100,7 @@ class DocumentEvidenceModel:
     sources: list[dict[str, Any]]
     article_fields: dict[str, EvidenceItem]
     candidates: list[EndpointCandidate]
+    evidence_index: list[dict[str, Any]]
     pages: list[str]
     provenance: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
@@ -112,6 +113,7 @@ class DocumentEvidenceModel:
                 key: value.to_dict() for key, value in self.article_fields.items()
             },
             "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "evidence_index": self.evidence_index,
             "provenance": self.provenance,
             "warnings": self.warnings,
         }
@@ -584,6 +586,20 @@ def extract_document_model(sources: Sequence[Mapping[str, Any]], rule_version: s
         sources=[{key: value for key, value in source.items() if key != "pages"} for source in sources],
         article_fields=article_fields,
         candidates=candidates,
+        evidence_index=[
+            {
+                "chunk_id": f"{span.document}:{span.page}:{index}",
+                "document": span.document,
+                "page": span.page,
+                "section": span.section,
+                "text": span.text,
+                "table_or_figure": (
+                    span.section if span.section in {"Table", "Figure"} else ""
+                ),
+                "untrusted_source": True,
+            }
+            for index, span in enumerate(spans, start=1)
+        ],
         pages=combined_pages,
         provenance={
             "extraction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
