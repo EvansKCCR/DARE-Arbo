@@ -71,6 +71,8 @@ def parse_register(content):
             elif progress is None and status.casefold() in ('not started', 'planned', 'planned / update'):
                 progress = 0
             tasks.append(dict(id=str(get('id', number)), activity=str(get('activity')).strip(),
+                              row=number, assignee=str(get('assignee email')).strip(), note=str(get('progress notes')),
+                              reminder_day=str(get('last reminder date')), reminder_state=str(get('last reminder state')),
                               workstream=str(get('workstream', 'Other')).strip(),
                               output=str(get('key output / milestone')), owner=str(get('owner', 'Unassigned')),
                               status=status, start=start, end=end, progress=progress))
