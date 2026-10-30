@@ -7,6 +7,7 @@ from drive_store import create_service
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
+from assignment_notifications import configured, process_notifications
 
 WORKSPACE_CSS = """<style>
 .st-key-pm_workspace [data-testid="stHeading"] :is(h1,h2,h3){color:#24364B}
@@ -26,6 +27,12 @@ WORKSPACE_CSS = """<style>
 .st-key-pm_workspace .pm-gantt-track{position:relative;height:32px;background:repeating-linear-gradient(to right,#F1F4F7 0,#F1F4F7 calc(12.5% - 1px),#DFE5EB calc(12.5% - 1px),#DFE5EB 12.5%);border-radius:4px}
 .st-key-pm_workspace .pm-gantt-bar{position:absolute;top:7px;height:18px;border-radius:3px;min-width:2px}
 .st-key-pm_workspace .pm-today{position:absolute;top:0;bottom:0;border-left:2px solid #24364B}
+.st-key-pm_workspace .pm-calendar{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;color:#24364B}
+.st-key-pm_workspace .pm-calendar th{padding:10px 4px;background:#F3F5F7;border:1px solid #E0E5EB}
+.st-key-pm_workspace .pm-calendar td{vertical-align:top;height:110px;padding:6px;border:1px solid #E0E5EB;overflow-wrap:anywhere}
+.st-key-pm_workspace .pm-calendar time{display:block;font-weight:600;margin-bottom:6px}
+.st-key-pm_workspace .pm-calendar-event{background:#F1F5F7;border-left:3px solid #367E87;padding:4px;margin:4px 0;line-height:1.4}
+.st-key-pm_workspace .pm-calendar-event small{display:block;font-size:11px;color:#526277}
 @media(max-width:650px){.st-key-pm_workspace .pm-gantt-row{grid-template-columns:1fr;gap:8px}.st-key-pm_workspace .pm-gantt-axis{grid-template-columns:1fr}.st-key-pm_workspace .pm-gantt-axis>div:first-child{display:none}}
 </style>"""
 
@@ -76,6 +83,8 @@ def show_assignments(settings, identity, allowed):
         st.caption('Updates are saved to the Activity Register. Open forms stay unchanged during dashboard synchronization.')
         if st.session_state.pop('pm_task_saved', False):
             st.success('Activity update saved to the source workbook.')
+        if st.session_state.get('pm_notification_message'):
+            st.info(st.session_state.pop('pm_notification_message'))
         if not tasks:
             st.info('No activities are recorded yet.' if admin else 'No activities are assigned to your verified email. Ask the study coordinator to complete Assignee email in the register.')
         else:
@@ -89,7 +98,7 @@ def show_assignments(settings, identity, allowed):
                 record = options[chosen]
                 if st.session_state.get('pm_editor_open') == chosen:
                     draft = st.session_state['pm_drafts'][chosen]
-                    task_form(store, allowed(), draft, admin)
+                    task_form(store, allowed(), draft, admin, cfg.get('email',{}))
                 else:
                     detail(record, datetime.now(timezone.utc).date())
                     if st.button('Open activity editor', type='primary'):
@@ -102,8 +111,17 @@ def show_assignments(settings, identity, allowed):
             else:
                 st.info('No assigned activities match your search.')
         if admin:
+            with st.expander('Assignment email status'):
+                st.caption('Sent means accepted by the mail server. Claimed or uncertain deliveries are not automatically retried.')
+                if not configured(cfg.get('email',{})):
+                    st.info('Assignment notifications are queued in the workbook. Configure the email sender or background worker to deliver them.')
+                history = snapshot.get('notifications',[])
+                if history:
+                    st.dataframe([{'Activity ID':e['activity_id'],'Recipient':e['recipient'],'State':e['state'], 'Updated at':e['updated_at']} for e in history[-20:][::-1]],hide_index=True,width='stretch',key='pm_notification_history')
+                else:
+                    st.caption('No assignment notifications recorded yet.')
             with st.expander('Create a new study activity'):
-                task_form(store, allowed(), None, True)
+                task_form(store, allowed(), None, True, cfg.get('email',{}))
         if not st.session_state.get('pm_editor_open'):
             if st.button('Reload assignments and discard saved drafts'):
                 st.session_state.pop('pm_snapshot', None)
@@ -118,7 +136,7 @@ def show_assignments(settings, identity, allowed):
         st.button('Retry loading activities')
 
 
-def task_form(store, collaborators, task, admin):
+def task_form(store, collaborators, task, admin, email_config=None):
     initial = task or {}
     record_key = initial.get('record_key', 'new')
     key = 'pm_form_' + str(record_key) + '_' + str(st.session_state.get('pm_form_generation',0)) + '_' + str(st.session_state.get('pm_form_generations', {}).get(record_key, 0))
@@ -178,7 +196,8 @@ def task_form(store, collaborators, task, admin):
         try:
             if not task and (not fields['start_date'] or not fields['due_date']):
                 raise ValueError('Record both a start date and a deadline for a new activity.')
-            store.save(changed, initial.get('id'), initial.get('version'))
+            with st.spinner('Saving activity to the workbook…'):
+                result = store.save(changed, initial.get('id'), initial.get('version'))
         except (ValueError, PermissionError) as error:
             st.error(str(error))
             st.caption('Your draft is retained. If another workbook edit caused a conflict, copy your notes before deliberately discarding and reloading the activity.')
@@ -186,6 +205,16 @@ def task_form(store, collaborators, task, admin):
             logging.getLogger(__name__).warning('Activity save failed.')
             st.error('The update could not be saved. Your draft is retained; check the connection before retrying.')
         else:
+            events = result.get('notification_events',[]) if isinstance(result,dict) else []
+            if events:
+                st.session_state['pm_notification_message'] = f'{len(events)} assignment email notifications queued.'
+                if configured(email_config or {}):
+                    try:
+                        with st.spinner('Sending assignment notifications…'):
+                            delivered = process_notifications(store,email_config,send=True,event_ids=events)
+                        st.session_state['pm_notification_message'] = f"Assignment email: {delivered['sent']} accepted by the mail server; {delivered['uncertain']} require delivery review. See Assignment email status for pending or skipped items."
+                    except Exception:
+                        st.session_state['pm_notification_message'] = 'Activity saved. Email delivery could not be confirmed; review Assignment email status before retrying.'
             st.session_state.pop('pm_snapshot', None)
             st.session_state.pop('pm_editor_open', None)
             st.session_state.get('pm_drafts', {}).pop(record_key,None)

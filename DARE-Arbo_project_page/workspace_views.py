@@ -225,8 +225,13 @@ def timeline_html(tasks, start, end, today):
     return '<div class="pm-gantt"><div class="pm-gantt-axis"><div>Activity / workstream</div><div class="pm-ticks">'+ticks+'</div></div>'+''.join(rows)+'</div>'
 
 
-def study_timeline(tasks, today):
+def study_timeline(tasks, today, viewer=None):
     st.subheader('Study Timeline')
+    view = st.radio('Schedule view', ['Gantt schedule','Activity calendar'],horizontal=True,key='pm_schedule_view')
+    if view == 'Activity calendar':
+        from activity_calendar import show_activity_calendar
+        show_activity_calendar(filters(tasks,today,scope='calendar'),today,viewer)
+        return
     st.caption(f'Today · {format_date(today)}. Bars represent scheduled duration; labels show workflow state. Completion percentages are reported separately in the Activity Register.')
     shown = filters(tasks, today, scope='timeline')
     dated = [t for t in tasks if t['start'] and t['end'] and t['end'] >= t['start']]

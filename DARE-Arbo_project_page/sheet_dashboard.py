@@ -122,10 +122,16 @@ def load_snapshot(settings, identity, allowed, refresh=False, allow_expired=Fals
     try:
         _, _, content = DriveStore(create_service(config), identity, allowed).download(SOURCE_ID)
         tasks, issues = parse_register(content)
+        from assignment_notifications import read_events
+        book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        try:
+            notifications = read_events(book)
+        finally:
+            book.close()
     except Exception:
         st.session_state.pop('pm_snapshot', None)
         raise
-    result = dict(tasks=tasks, issues=issues, version=sha256(content).hexdigest(),
+    result = dict(tasks=tasks, issues=issues, notifications=notifications, version=sha256(content).hexdigest(),
                   loaded=time.monotonic(), synced=datetime.now(timezone.utc))
     st.session_state['pm_snapshot'] = result
     return result
@@ -165,5 +171,9 @@ def show_sheet_dashboard(settings, identity, allowed, view='Overview'):
     from workspace_views import overview, register, study_timeline
     # Each read section owns its timed fragment; task forms are outside them.
     with st.container(key='pm_read_' + view.replace(' ', '_')):
-        {'Overview': overview, 'Activity Register': register, 'Study Timeline': study_timeline}[view](snapshot['tasks'], datetime.now(timezone.utc).date())
+        render = {'Overview': overview, 'Activity Register': register, 'Study Timeline': study_timeline}[view]
+        if view == 'Study Timeline':
+            render(snapshot['tasks'], datetime.now(timezone.utc).date(), identity()['email'])
+        else:
+            render(snapshot['tasks'], datetime.now(timezone.utc).date())
     st.caption('Automatic synchronization every 60 seconds while this workspace is open. Task drafts are not refreshed automatically.')

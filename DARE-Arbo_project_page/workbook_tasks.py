@@ -8,6 +8,7 @@ from googleapiclient.http import MediaIoBaseUpload
 from access import has_full_access
 from drive_store import FOLDER_ID, MAX_BYTES
 from sheet_dashboard import SOURCE_ID, parse_register, parse_date
+from assignment_notifications import initialize_tracking, record_assignment, read_events, TRACKING, QUEUE
 
 STATUSES = ['Not started', 'Planned / update', 'In progress', 'Under review', 'Completed', 'Blocked']
 PRIORITIES = ['Low', 'Normal', 'High']
@@ -139,8 +140,14 @@ class WorkbookTasks:
         if schedule_changed:
             if parse_date(current['due_date']) < parse_date(current['start_date']):
                 raise ValueError('The deadline must be on or after the start date.')
+        assignment_changed = admin and (not task_id or 'assignee' in fields) and emails(current.get('assignee','')) != emails(task['assignee'] if task else '')
+        if assignment_changed and task and (task['id'] == 'Not recorded' or sum(t['id'] == task['id'] for t in tasks) != 1):
+            raise ValueError('Set a unique activity ID in the workbook before changing this assignment.')
+        event_ids = []
         def change(sheet, column, header_row):
             target = task_id or max([header_row] + [t['row'] for t in tasks]) + 1
+            if admin:
+                initialize_tracking(sheet.parent, tasks)
             if not task_id:
                 sheet.cell(target, column('ID'), 'T' + datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f'))
             names = dict(title='Activity', description='Key output / milestone', assignee='Assignee email',
@@ -163,6 +170,85 @@ class WorkbookTasks:
                         cell.number_format = '0.##'
             if schedule_changed and 'duration (days)' in [str(c.value or '').casefold() for c in sheet[header_row]]:
                 sheet.cell(target, column('Duration (days)'), (parse_date(current['due_date'])-parse_date(current['start_date'])).days+1)
+            if assignment_changed:
+                activity_id = task['id'] if task else str(sheet.cell(target, column('ID')).value)
+                event_ids.extend(record_assignment(sheet.parent, activity_id, current.get('assignee',''), previous_assignee=task['assignee'] if task else ''))
+        self.write(content, etag, change)
+        return {'notification_events': event_ids}
+
+    def notification_events(self):
+        if not self.is_admin():
+            raise PermissionError('Administrator access required for notification history.')
+        content, _ = self.read()
+        book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        try:
+            return read_events(book)
+        finally:
+            book.close()
+
+    def sync_assignments(self):
+        """Detect direct workbook edits. First use baselines historical assignments."""
+        if not self.is_admin():
+            raise PermissionError('Administrator access required for assignment tracking.')
+        content, etag = self.read()
+        tasks, _ = parse_register(content)
+        events = []
+        # Skip writes when no assignment changes need tracking.
+        book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        try:
+            baseline = TRACKING not in book.sheetnames
+            previous = {} if baseline else {str(r[0]): emails(str(r[1] or '')) for r in book[TRACKING].iter_rows(min_row=2, max_col=2, values_only=True) if r[0]}
+        finally:
+            book.close()
+        unique = [t for t in tasks if t['id'] != 'Not recorded' and sum(x['id']==t['id'] for x in tasks)==1]
+        changed = [t for t in unique if previous.get(t['id'], set()) != emails(t['assignee']) or t['id'] not in previous]
+        if not baseline and not changed:
+            return []
+        def change(sheet, column, header_row):
+            if baseline:
+                initialize_tracking(sheet.parent, unique)
+            else:
+                for task in changed:
+                    events.extend(record_assignment(sheet.parent, task['id'], task['assignee']))
+        self.write(content, etag, change)
+        return events
+
+    def claim_assignment(self, event_id):
+        if not self.is_admin():
+            raise PermissionError('Administrator access required for notification delivery.')
+        content, etag = self.read()
+        tasks, _ = parse_register(content)
+        book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        try:
+            event = next((e for e in read_events(book) if e['event_id']==event_id), None)
+        finally:
+            book.close()
+        if not event or event['state'] != 'queued':
+            return None
+        matches = [t for t in tasks if t['id'] == event['activity_id']]
+        task = matches[0] if len(matches)==1 else None
+        valid = task and event['recipient'] in emails(task['assignee']) and event['recipient'] in {e.strip().casefold() for e in self.allowed()}
+        state = 'claimed' if valid else 'skipped'
+        def change(sheet, column, header_row):
+            for row in sheet.parent[QUEUE].iter_rows(min_row=2):
+                if str(row[0].value)==event_id:
+                    row[4].value=state
+                    row[5].value=datetime.now(timezone.utc).isoformat()
+                    break
+        self.write(content, etag, change)
+        return {'task': task, 'recipient': event['recipient']} if valid else None
+
+    def finish_assignment(self, event_id, state):
+        if not self.is_admin() or state not in ('sent','failed_or_uncertain'):
+            raise PermissionError('Administrator access required for notification status updates.')
+        content, etag = self.read()
+        def change(sheet, column, header_row):
+            for row in sheet.parent[QUEUE].iter_rows(min_row=2):
+                if str(row[0].value)==event_id and row[4].value=='claimed':
+                    row[4].value=state
+                    row[5].value=datetime.now(timezone.utc).isoformat()
+                    return
+            raise ValueError('The notification claim changed. Check delivery status before retrying.')
         self.write(content, etag, change)
 
     def claim_reminder(self, row, day):
