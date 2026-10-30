@@ -16,7 +16,7 @@ def show_project_management(settings, identity, allowed):
         from sheet_dashboard import show_sheet_dashboard
         show_sheet_dashboard(settings, identity, allowed)
     with assignments:
-        st.caption('Assignments managed here are stored separately. Update the source workbook to change its study schedule, owners or statuses.')
+        st.caption('Assignments managed here are stored separately.')
         show_assignment_management(settings, identity, allowed)
 
 
@@ -24,7 +24,7 @@ def show_assignment_management(settings, identity, allowed):
     cfg = settings().get('project_management', {})
     admins = lambda: cfg.get('admin_emails', ['evansasamoahadu@gmail.com'])
     if not cfg.get('database_url'):
-        st.info('Task management is awaiting database setup. The administrator can follow PROJECT_MANAGEMENT.md to connect persistent storage and reminders.')
+        st.info('Task management is awaiting database setup.')
         return
     db = Database(cfg['database_url'])
     store = TaskStore(db, identity, allowed, admins)
@@ -64,7 +64,7 @@ def show_assignment_management(settings, identity, allowed):
         if admin:
             st.subheader('Email reminders')
             st.write('The reminder worker sends one email per active task per day when its deadline is within three days or overdue. Completed tasks and removed collaborators are excluded.')
-            st.caption('Requires an external scheduler and SMTP configuration. Configure these using PROJECT_MANAGEMENT.md; opening this page does not send email.')
+            st.caption('Requires an external scheduler and SMTP configuration.')
     except Exception:
         logging.getLogger(__name__).warning('Task dashboard could not access storage.')
         st.error('Task storage is unavailable. Ask the administrator to check the database connection and configuration.')
