@@ -11,10 +11,20 @@ def show_project_management(settings, identity, allowed):
     if not has_full_access(identity(), allowed()):
         st.info('Sign in with an approved collaborator account to access your tasks.')
         return
+    dashboard, assignments = st.tabs(['Study dashboard · live workbook', 'Manage assigned tasks'])
+    with dashboard:
+        from sheet_dashboard import show_sheet_dashboard
+        show_sheet_dashboard(settings, identity, allowed)
+    with assignments:
+        st.caption('Assignments managed here are stored separately. Update the source workbook to change its study schedule, owners or statuses.')
+        show_assignment_management(settings, identity, allowed)
+
+
+def show_assignment_management(settings, identity, allowed):
     cfg = settings().get('project_management', {})
     admins = lambda: cfg.get('admin_emails', ['evansasamoahadu@gmail.com'])
     if not cfg.get('database_url'):
-        st.info('Task management is awaiting database setup.')
+        st.info('Task management is awaiting database setup. The administrator can follow PROJECT_MANAGEMENT.md to connect persistent storage and reminders.')
         return
     db = Database(cfg['database_url'])
     store = TaskStore(db, identity, allowed, admins)
