@@ -67,7 +67,7 @@ class WorkbookTasks:
                     assignee=task['assignee'], owner=task['owner'], workstream=task['workstream'],
                     start_date=task['start'].isoformat() if task['start'] else '',
                     due_date=task['end'].isoformat() if task['end'] else '', status=task['status'],
-                    progress=task['progress'], note=task['note'], version=version,
+                    progress=100 if task['status'].casefold() in ('completed', 'complete', 'done') and task['progress'] is None else task['progress'], note=task['note'], version=version,
                     reminder_day=task['reminder_day'], reminder_state=task['reminder_state'])
 
     def write(self, content, etag, change):
@@ -135,8 +135,10 @@ class WorkbookTasks:
             raise ValueError('Description or notes exceed their length limit.')
         if not emails(current.get('assignee', '')).issubset({e.strip().casefold() for e in self.allowed()}):
             raise ValueError('Assignee email must contain only approved collaborator addresses.')
-        if parse_date(current['due_date']) < parse_date(current['start_date']):
-            raise ValueError('The deadline must be on or after the start date.')
+        schedule_changed = not task_id or bool({'start_date', 'due_date'} & fields.keys())
+        if schedule_changed:
+            if parse_date(current['due_date']) < parse_date(current['start_date']):
+                raise ValueError('The deadline must be on or after the start date.')
         def change(sheet, column, header_row):
             target = task_id or max([header_row] + [t['row'] for t in tasks]) + 1
             if not task_id:
@@ -144,7 +146,10 @@ class WorkbookTasks:
             names = dict(title='Activity', description='Key output / milestone', assignee='Assignee email',
                          owner='Owner', workstream='Workstream', start_date='Start', due_date='End',
                          status='Status', progress='Progress (%)', note='Progress notes')
-            for key in permitted & current.keys():
+            changed = set(fields)
+            if current['status'] == 'Completed':
+                changed.add('progress')
+            for key in changed:
                 cell = sheet.cell(target, column(names[key]))
                 value = current[key]
                 if key in ('start_date', 'due_date'):
@@ -156,7 +161,7 @@ class WorkbookTasks:
                         cell.data_type = 's'  # Treat user text literally, including leading '='.
                     if key == 'progress':
                         cell.number_format = '0.##'
-            if 'duration (days)' in [str(c.value or '').casefold() for c in sheet[header_row]]:
+            if schedule_changed and 'duration (days)' in [str(c.value or '').casefold() for c in sheet[header_row]]:
                 sheet.cell(target, column('Duration (days)'), (parse_date(current['due_date'])-parse_date(current['start_date'])).days+1)
         self.write(content, etag, change)
 

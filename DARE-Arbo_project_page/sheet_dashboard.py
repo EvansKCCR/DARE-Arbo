@@ -3,6 +3,8 @@ from datetime import date, datetime, timezone
 from html import escape
 from io import BytesIO
 import logging
+import time
+from hashlib import sha256
 import streamlit as st
 from openpyxl import load_workbook
 from google.auth.exceptions import RefreshError
@@ -35,7 +37,8 @@ def parse_register(content):
             raise ValueError('The workbook needs an Activity Register tab.')
         header = None
         tasks, issues = [], []
-        for number, row in enumerate(sheet.iter_rows(values_only=True), 1):
+        for number, cells in enumerate(sheet.iter_rows(), 1):
+            row = [cell.value for cell in cells]
             labels = [str(v or '').strip().casefold() for v in row]
             if header is None:
                 if {'activity', 'start', 'end', 'owner', 'status'}.issubset(labels):
@@ -46,31 +49,30 @@ def parse_register(content):
                 return row[index] if index is not None and index < len(row) and row[index] is not None else default
             if not str(get('activity')).strip():
                 continue
-            try:
-                start, end = parse_date(get('start')), parse_date(get('end'))
-                if end < start:
-                    raise ValueError('End before start')
-            except ValueError:
-                issues.append(f'Row {number}: missing or invalid start/end dates; timeline omitted.')
-                start = end = None
+            dates = []
+            for name in ('start', 'end'):
+                try:
+                    dates.append(parse_date(get(name)))
+                except ValueError:
+                    dates.append(None)
+            start, end = dates
+            if not start or not end or end < start:
+                issues.append(f'Row {number}: missing or invalid start/end dates; check the recorded schedule.')
             status = str(get('status', 'Not recorded')).strip()
             raw = get('progress (%)', get('progress', get('% complete', '')))
             progress = None
             if str(raw).strip():
                 try:
                     progress = float(str(raw).replace('%', '').strip())
-                    if isinstance(raw, (float, int)) and 0 < raw < 1:
+                    progress_index = next((header[k] for k in ('progress (%)', 'progress', '% complete') if k in header), None)
+                    if isinstance(raw, (float, int)) and progress_index is not None and '%' in cells[progress_index].number_format:
                         progress *= 100
                     if not 0 <= progress <= 100:
                         raise ValueError()
                 except ValueError:
                     issues.append(f'Row {number}: invalid progress percentage; using status only.')
                     progress = None
-            if status.casefold() in ('completed', 'complete', 'done'):
-                progress = 100
-            elif progress is None and status.casefold() in ('not started', 'planned', 'planned / update'):
-                progress = 0
-            tasks.append(dict(id=str(get('id', number)), activity=str(get('activity')).strip(),
+            tasks.append(dict(id=str(get('id')).strip() or 'Not recorded', activity=str(get('activity')).strip(),
                               row=number, assignee=str(get('assignee email')).strip(), note=str(get('progress notes')),
                               reminder_day=str(get('last reminder date')), reminder_state=str(get('last reminder state')),
                               workstream=str(get('workstream', 'Other')).strip(),
@@ -78,6 +80,13 @@ def parse_register(content):
                               status=status, start=start, end=end, progress=progress))
         if header is None:
             raise ValueError('Activity Register headers were not found.')
+        from collections import Counter
+        counts = Counter(t['id'] for t in tasks)
+        for task in tasks:
+            valid_id = task['id'] != 'Not recorded' and counts[task['id']] == 1
+            task['record_key'] = task['id'] if valid_id else f'row:{task["row"]}'
+            if not valid_id:
+                issues.append(f'Row {task["row"]}: missing or duplicate activity ID; assign a unique ID for stable selection.')
         return tasks, issues
     finally:
         workbook.close()
@@ -87,87 +96,74 @@ def elapsed(start, end, today):
     return max(0.0, min(1.0, (today - start).days / max(1, (end - start).days)))
 
 
-def timeline(tasks, start, end, today):
-    span = max(1, (end-start).days + 1)
-    marker = max(0, min(100, (today-start).days / span * 100))
-    rows = []
-    for task in tasks:
-        if not task['start']:
-            continue
-        left = (task['start']-start).days / span * 100
-        width = ((task['end']-task['start']).days+1) / span * 100
-        color = '#43866B' if task['progress'] == 100 else '#A63348' if task['end'] < today else '#347F8A'
-        label = f"{task['activity']} · {task['start']:%d %b %Y} – {task['end']:%d %b %Y} · {task['status']}"
-        rows.append(f'<div style="margin:14px 0"><div>{escape(task["activity"])}</div>'
-                    f'<div style="height:22px;background:#EDF4F0;position:relative;border-radius:5px" title="{escape(label, quote=True)}">'
-                    f'<div style="position:absolute;left:{left:.4f}%;width:{width:.4f}%;height:22px;background:{color};border-radius:5px"></div>'
-                    f'<div style="position:absolute;left:{marker:.4f}%;height:22px;border-left:2px solid #111"></div></div></div>')
-    st.html('<div role="img" aria-label="Study schedule; black line marks today">' + ''.join(rows) + '</div>')
+
+def snapshot_scope(settings, identity, allowed):
+    from access import require_full_access
+    require_full_access(identity(), allowed())
+    cfg = settings()
+    source = str(sorted(cfg.get('drive', {}).items()))
+    roles = str(cfg.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com']))
+    return sha256((identity()['email'].strip().casefold() + str(sorted(allowed())) + source + roles).encode()).hexdigest()
+
+
+def load_snapshot(settings, identity, allowed, refresh=False, allow_expired=False):
+    scope = snapshot_scope(settings, identity, allowed)
+    if st.session_state.get('pm_scope') != scope:
+        for key in list(st.session_state):
+            if key.startswith(('pm_', '_pm_', 'workbook_task_')):
+                del st.session_state[key]
+        st.session_state['pm_scope'] = scope
+    cached = st.session_state.get('pm_snapshot')
+    if cached and not refresh and (allow_expired or time.monotonic() - cached['loaded'] < 60):
+        return cached
+    config = settings().get('drive', {})
+    if not all(config.get(k) for k in ('client_id', 'client_secret', 'refresh_token')):
+        raise ValueError('Drive connection is not configured.')
+    try:
+        _, _, content = DriveStore(create_service(config), identity, allowed).download(SOURCE_ID)
+        tasks, issues = parse_register(content)
+    except Exception:
+        st.session_state.pop('pm_snapshot', None)
+        raise
+    result = dict(tasks=tasks, issues=issues, version=sha256(content).hexdigest(),
+                  loaded=time.monotonic(), synced=datetime.now(timezone.utc))
+    st.session_state['pm_snapshot'] = result
+    return result
+
+
+def invalidate_snapshot():
+    st.session_state.pop('pm_snapshot', None)
+
+
+def sync_header(snapshot, settings, identity, allowed, key):
+    left, middle, right = st.columns([3, 2, 1])
+    left.caption('Workbook synchronized · ' + snapshot['synced'].strftime('%d %b %Y %H:%M:%S UTC'))
+    middle.link_button('Open source workbook', SOURCE_URL, width='stretch')
+    right.button('Refresh', key='pm_refresh_' + key, width='stretch', on_click=invalidate_snapshot)
+    if snapshot['issues']:
+        with st.expander(f"Workbook data checks · {len(snapshot['issues'])} items"):
+            for issue in snapshot['issues']:
+                st.caption(issue)
 
 
 @st.fragment(run_every='60s')
-def show_sheet_dashboard(settings, identity, allowed):
-    # Authorization is rechecked on every timed rerun. No shared data cache.
+def show_sheet_dashboard(settings, identity, allowed, view='Overview'):
     if not has_full_access(identity(), allowed()):
-        st.info('Sign in with an approved collaborator account to view the live study dashboard.')
-        return
-    st.subheader('Live study dashboard')
-    st.caption('Refreshes every 60 seconds while this page is open. Save workbook edits in Google Drive to publish them here.')
-    st.button('Refresh study dashboard', key='refresh_sheet_dashboard')
-    config = settings().get('drive', {})
-    if not all(config.get(key) for key in ('client_id', 'client_secret', 'refresh_token')):
-        st.info('Connect the existing project Google Drive account in deployment secrets to enable the live workbook dashboard.')
+        st.info('Sign in with an approved collaborator account to view the study workspace.')
         return
     try:
-        store = DriveStore(create_service(config), identity, allowed)
-        _, _, content = store.download(SOURCE_ID)
-        tasks, issues = parse_register(content)
+        snapshot = load_snapshot(settings, identity, allowed)
     except RefreshError:
-        st.error('The Google Drive connection has expired or been revoked. The administrator needs to reconnect the folder-owner account and update the Drive refresh token in deployment secrets.')
+        st.error('Google Drive authorization has expired or been revoked. Ask the administrator to reconnect the folder-owner account.')
         return
     except Exception:
-        logging.getLogger(__name__).warning('Live study workbook could not be read.')
-        st.error('The live workbook could not be loaded. Check the Drive connection, folder access and Activity Register tab. Retry with Refresh study dashboard.')
+        logging.getLogger(__name__).warning('Study workbook could not be synchronized.')
+        st.error('The workbook could not be synchronized. Check the Drive connection and Activity Register headers, then retry.')
+        st.button('Retry synchronization', key='pm_retry_' + view)
         return
-    today = datetime.now(timezone.utc).date()  # Ghana time is UTC.
-    st.caption(f'Last successful read: {datetime.now(timezone.utc):%d %b %Y %H:%M:%S} UTC · Activity Register')
-    st.link_button('Open source workbook ↗', SOURCE_URL)
-    for issue in issues:
-        st.warning(issue)
-    dated = [t for t in tasks if t['start']]
-    if not tasks:
-        st.info('No activities recorded yet.')
-        return
-    completed = sum(t['progress'] == 100 for t in tasks)
-    overdue = sum(t['end'] is not None and t['end'] < today and t['progress'] != 100 for t in tasks)
-    for col, label, value in zip(st.columns(3), ['Activities', 'Completed', 'Past deadline · not recorded complete'], [len(tasks), completed, overdue]):
-        col.metric(label, value)
-    st.progress(completed / len(tasks), text=f'Recorded completion · {completed} of {len(tasks)} activities completed')
-    if dated:
-        start, end = min(t['start'] for t in dated), max(t['end'] for t in dated)
-        st.subheader('Entire study timeline')
-        st.progress(elapsed(start, end, today), text=f'{start:%d %b %Y} – {end:%d %b %Y} · {elapsed(start, end, today):.0%} of scheduled time elapsed')
-        st.caption('Timeline bars show calendar time, not work completed. Study dates come from the earliest start and latest end in the register.')
-    workstream = st.selectbox('Workstream', ['All workstreams'] + sorted({t['workstream'] for t in tasks}))
-    owner = st.selectbox('Assignment / owner', ['All owners'] + sorted({t['owner'] for t in tasks}))
-    status = st.selectbox('Recorded status', ['All statuses'] + sorted({t['status'] for t in tasks}))
-    shown = [t for t in tasks if (workstream == 'All workstreams' or t['workstream'] == workstream)
-             and (owner == 'All owners' or t['owner'] == owner) and (status == 'All statuses' or t['status'] == status)]
-    st.subheader('Activity schedule')
-    if dated:
-        st.caption(f'{start:%d %b %Y} → {end:%d %b %Y} · Black line: today · Green: completed · Red: past deadline · Teal: scheduled')
-        timeline(shown, start, end, today)
-    if not shown:
-        st.info('No activities match these filters.')
-    st.subheader('Activity and task details')
-    for index, task in enumerate(shown):
-        with st.expander(f'{task["id"]} · {task["activity"]}', expanded=len(shown) <= 3):
-            st.write(f'**Workstream:** {task["workstream"]} · **Owner:** {task["owner"]}')
-            st.write(f'**Status:** {task["status"]}')
-            st.text(task['output'])
-            if task['start']:
-                st.progress(elapsed(task['start'], task['end'], today), text=f'Timeline · {task["start"]:%d %b %Y} – {task["end"]:%d %b %Y} · {elapsed(task["start"], task["end"], today):.0%} elapsed')
-            if task['progress'] is not None:
-                st.progress(task['progress']/100, text=f'Recorded task progress · {task["progress"]:g}%')
-            else:
-                st.caption('Work completion percentage not recorded. Add a Progress (%) column to the register for numeric progress.')
+    sync_header(snapshot, settings, identity, allowed, view)
+    from workspace_views import overview, register, study_timeline
+    # Each read section owns its timed fragment; task forms are outside them.
+    with st.container(key='pm_read_' + view.replace(' ', '_')):
+        {'Overview': overview, 'Activity Register': register, 'Study Timeline': study_timeline}[view](snapshot['tasks'], datetime.now(timezone.utc).date())
+    st.caption('Automatic synchronization every 60 seconds while this workspace is open. Task drafts are not refreshed automatically.')
