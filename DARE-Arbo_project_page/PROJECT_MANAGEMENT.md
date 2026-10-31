@@ -29,15 +29,16 @@ host = "smtp.gmail.com"
 port = 587
 username = "evansasamoahadu@gmail.com"
 from_address = "evansasamoahadu@gmail.com"
-password = "YOUR_PRIVATE_GMAIL_APP_PASSWORD"
+# Keep your existing password entry here; do not replace it with a template.
 app_url = "https://dare-arbo-gxsla2u2vugc8gnsjyessi.streamlit.app/"
 ```
 
 Google Drive consent does not grant SMTP access. Generate a Gmail app password
 privately (requires Google 2-Step Verification; account policy may restrict it):
 https://support.google.com/accounts/answer/185833 . Never put it in chat or Git.
-The local sender configuration is prepared with an empty password; this leaves
-delivery disabled until configured. Do not use the regular Google account password.
+This example deliberately supplies no password value. Merge non-secret keys
+without replacing existing live secrets. Enter a Gmail app password privately
+as password in [email]; do not use the regular Google account password.
 
 For assignments made directly in Google Sheets and for queued delivery while
 Streamlit sleeps, run the independent worker once per minute using a single

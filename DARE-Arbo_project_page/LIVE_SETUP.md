@@ -31,6 +31,14 @@ It does not expose the password or send a test message. A successful check means
 authentication succeeded, not proof that a recipient's inbox accepts messages.
 Assignment email history reports SMTP-server acceptance separately.
 
+Runtime secret check reports whether email.password is missing, empty, a wrong
+value type, or present. It reports only key names if a password is found under
+common alternative settings such as email.app_password or SMTP_PASSWORD. The
+check never displays, copies, stores, clears or migrates secret values. A missing
+runtime value alone does not establish that a saved Cloud setting was deleted.
+The repository has no real secrets.toml and its example file is never loaded by
+the application. Do not replace a saved Secrets configuration with that example.
+
 For assignments made directly in the workbook, enable the external polling
 worker described in PROJECT_MANAGEMENT.md. Page refreshes do not send email.
 

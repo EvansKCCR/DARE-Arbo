@@ -7,7 +7,7 @@ from drive_store import create_service
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
-from assignment_notifications import configured, process_notifications, verify_sender
+from assignment_notifications import configured, process_notifications, verify_sender, sender_secret_status
 
 WORKSPACE_CSS = """<style>
 .st-key-pm_workspace [data-testid="stHeading"] :is(h1,h2,h3){color:#24364B}
@@ -114,6 +114,10 @@ def show_assignments(settings, identity, allowed):
             with st.expander('Assignment email status'):
                 email=cfg.get('email',{})
                 st.caption('Sender: '+str(email.get('from_address','Not configured')))
+                secret_status=sender_secret_status(cfg)
+                st.caption('Runtime secret check: '+secret_status['password'])
+                if secret_status['alternate_keys']:
+                    st.info('A password value exists under another setting: '+', '.join(secret_status['alternate_keys'])+'. This app reads email.password. Check key placement in Secrets; values are not shown or changed here.')
                 if st.button('Verify email connection (no message sent)',disabled=not configured(email),key='pm_check_email'):
                     try:
                         if not store.is_admin():raise PermissionError('Administrator access required.')

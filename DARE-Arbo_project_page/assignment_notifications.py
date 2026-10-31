@@ -90,7 +90,32 @@ def read_events(book):
 
 
 def configured(config):
-    return all(config.get(k) for k in ('host','username','password','from_address','app_url'))
+    return all(isinstance(config.get(k),str) and config[k].strip() for k in ('host','username','password','from_address','app_url'))
+
+
+def sender_secret_status(settings):
+    """Report presence and key placement only. Never return a secret value."""
+    section=settings.get('email',{})
+    if not isinstance(section,dict):
+        return {'password':'Email section is not a TOML table','alternate_keys':[]}
+    value=section.get('password')
+    if value is None:
+        state='Missing email.password key'
+    elif not isinstance(value,str):
+        state='email.password must be a quoted string'
+    elif not value.strip():
+        state='email.password is empty'
+    else:
+        state='email.password is present (value hidden)'
+    alternates=[]
+    for key in ('app_password','smtp_password','gmail_app_password'):
+        if section.get(key):alternates.append('email.'+key)
+    for key in ('SMTP_PASSWORD','GMAIL_APP_PASSWORD'):
+        if settings.get(key):alternates.append(key)
+    for name in ('smtp','gmail','auth'):
+        nested=settings.get(name,{})
+        if isinstance(nested,dict) and nested.get('password'):alternates.append(name+'.password')
+    return {'password':state,'alternate_keys':alternates}
 
 
 def verify_sender(config):
