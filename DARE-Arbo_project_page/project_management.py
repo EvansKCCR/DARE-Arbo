@@ -8,6 +8,7 @@ from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
 from assignment_notifications import configured, process_notifications, verify_sender, sender_secret_status
+from meeting_scheduler import show_meetings
 
 WORKSPACE_CSS = """<style>
 .st-key-pm_workspace [data-testid="stHeading"] :is(h1,h2,h3){color:#24364B}
@@ -59,12 +60,14 @@ def show_project_management(settings, identity, allowed):
         st.write('Study coordination, milestones, deliverables and implementation progress')
         st.caption('Administrator workspace' if admin else 'Research collaborator workspace')
         # Native tabs switch without rerunning or unmounting an open editing form.
-        tabs = st.tabs(['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks'])
+        tabs = st.tabs(['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings'])
         for tab, view in zip(tabs[:3], ['Overview', 'Activity Register', 'Study Timeline']):
             with tab:
                 show_sheet_dashboard(settings, identity, allowed, view)
         with tabs[3]:
             show_assignments(settings, identity, allowed)
+        with tabs[4]:
+            show_meetings(settings, identity, allowed)
 
 
 @st.fragment

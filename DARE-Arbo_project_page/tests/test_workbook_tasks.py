@@ -124,19 +124,20 @@ show_project_management(lambda: {'drive': dict(client_id='test', client_secret='
  lambda: st.session_state['person'], lambda: ['admin@example.org','one@example.org'])
 ''', default_timeout=30)
         app.session_state['person'] = self.person.copy()
-        with patch('project_management.create_service'), patch('sheet_dashboard.create_service'), patch('sheet_dashboard.DriveStore.download', side_effect=lambda *args: ('file.xlsx','',self.content)) as download, patch('project_management.WorkbookTasks', return_value=self.store):
+        with patch('project_management.show_meetings'), patch('project_management.create_service'), patch('sheet_dashboard.create_service'), patch('sheet_dashboard.DriveStore.download', side_effect=lambda *args: ('file.xlsx','',self.content)) as download, patch('project_management.WorkbookTasks', return_value=self.store):
             app.run()
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
             self.assertTrue(any(t.label == 'Assignee email' for t in app.text_input))
-            self.assertEqual(['Overview', 'Activity Register', 'Study Timeline', 'Task Management'], [t.label for t in app.tabs])
+            self.assertEqual(['Overview', 'Activity Register', 'Study Timeline', 'Task Management', 'Meetings'], [t.label for t in app.tabs])
             self.assertEqual(1, download.call_count)
             app.session_state['person'] = {**self.person, 'email': self.people[1]}
             self.person['email'] = self.people[1]
             app.run()
             self.assertFalse(app.exception)
             self.assertFalse(any(t.label == 'Assignee email' for t in app.text_input))
-            self.assertEqual('My Tasks', app.tabs[-1].label)
+            self.assertEqual('My Tasks', app.tabs[3].label)
+            self.assertEqual('Meetings', app.tabs[4].label)
             next(b for b in app.button if b.label == 'Open activity editor').click().run()
             self.assertFalse(app.exception)
             next(n for n in app.number_input if n.label == 'Recorded progress (%)').set_value(50.0)
@@ -167,7 +168,7 @@ show_project_management(lambda: {'drive':dict(client_id='test',client_secret='te
  lambda:['admin@example.org','one@example.org'])
 ''',default_timeout=30)
         app.session_state['person']=self.person.copy()
-        with patch('project_management.create_service'), patch('sheet_dashboard.create_service'), patch('sheet_dashboard.DriveStore.download',side_effect=lambda *a:('file.xlsx','',self.content)), patch('project_management.WorkbookTasks',return_value=self.store):
+        with patch('project_management.show_meetings'), patch('project_management.create_service'), patch('sheet_dashboard.create_service'), patch('sheet_dashboard.DriveStore.download',side_effect=lambda *a:('file.xlsx','',self.content)), patch('project_management.WorkbookTasks',return_value=self.store):
             app.run()
             for label,value in [('Activity title','New pilot review'),('Workstream','Pilot'),('Responsible owner','EAA'),('Assignee email','one@example.org')]:
                 next(t for t in app.text_input if t.label==label).set_value(value)

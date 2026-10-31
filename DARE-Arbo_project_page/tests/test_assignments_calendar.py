@@ -55,7 +55,7 @@ show_project_management(lambda:{'drive':dict(client_id='test',client_secret='tes
 lambda:['admin@example.org','one@example.org'])
 ''',default_timeout=30)
         app.session_state['person']=self.person.copy()
-        with patch('project_management.create_service'),patch('sheet_dashboard.create_service'),patch('sheet_dashboard.DriveStore.download',side_effect=lambda *args:('file.xlsx','',self.content)),patch('project_management.WorkbookTasks',return_value=self.store):
+        with patch('project_management.show_meetings'), patch('project_management.create_service'),patch('sheet_dashboard.create_service'),patch('sheet_dashboard.DriveStore.download',side_effect=lambda *args:('file.xlsx','',self.content)),patch('project_management.WorkbookTasks',return_value=self.store):
             app.run()
             next(r for r in app.radio if r.label=='Schedule view').set_value('Activity calendar').run()
             self.assertFalse(app.exception)
