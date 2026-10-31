@@ -295,48 +295,8 @@ elif page == 'Framework & methods':
         st.info('The translation workbook is currently unavailable. The project administrator needs to include Translation.xlsx in this deployment.')
 
 elif page == 'Team':
-    st.title('Meet the study team')
-    st.write('A multidisciplinary collaboration spanning infectious diseases, surveillance, laboratory diagnosis, evidence synthesis and quantitative methods.')
-    st.caption('Profiles reflect the names, positions, affiliations and experience listed in the project workbook.')
-    query = st.text_input('Find a team member', placeholder='Search by name, expertise or institution')
-    affiliations = sorted({m['affiliation'] for m in STUDY['team']})
-    institution = st.selectbox('Affiliation', ['All affiliations'] + affiliations)
-    members = [m for m in STUDY['team'] if (institution == 'All affiliations' or m['affiliation'] == institution)
-               and query.casefold() in ' '.join(m.values()).casefold()]
-    st.caption(f'{len(members)} team members')
-    if not members:
-        st.info('No team members match your search.')
-    portraits = {
-        'John Humphrey Amuasi': 'John_H_Amuasi.png',
-        'Anthony Afum-Adjei Awuah': 'Anthony_A_A_Awuah.png',
-        'Christian Obirikorang': 'Christian_Obirikorang.png',
-        'Evans Asamoah Adu': 'Evans_Asamoah_Adu.png',
-        'Afolabi Owoloye': 'Afolabi_Owoloye.png',
-        'Natalia Shakela': 'Natalia_Shakela.png',
-    }
-    featured = [m for m in members if m['name'] in portraits]
-    cards = []
-    for member in featured:
-        photo = b64encode((ROOT / 'Images' / portraits[member['name']]).read_bytes()).decode('ascii')
-        profile = {key: escape(value) for key, value in member.items()}
-        cards.append(
-            '<article class="team-card">'
-            f'<div class="team-photo"><img src="data:image/png;base64,{photo}" '
-            f'alt="Portrait of {profile["name"]}"></div>'
-            f'<h3>{profile["name"]}</h3>'
-            f'<p class="team-role">{profile["position"]}</p>'
-            f'<p class="team-affiliation">{profile["affiliation"]}</p>'
-            f'<div class="team-expertise"><strong>Expertise</strong><p>{profile["expertise"]}</p></div>'
-            '</article>'
-        )
-    if cards:
-        st.html('<div class="team-grid">' + ''.join(cards) + '</div>')
-    remaining = [m for m in members if m['name'] not in portraits]
-    if remaining:
-        st.subheader('Additional team members')
-        st.dataframe([{'Name': m['name'], 'Position': m['position'], 'Affiliation': m['affiliation'],
-                       'Expertise': m['expertise']} for m in remaining], hide_index=True, width='stretch')
-    st.caption('Source: ' + STUDY['source'] + ' · Team_members. Photographs supplied by the project team.')
+    from team_profiles import show_team
+    show_team(settings, identity, allowed, ROOT, STUDY)
 
 elif page == 'Development workflow':
     st.title('Development workflow')

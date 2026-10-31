@@ -93,6 +93,15 @@ def configured(config):
     return all(config.get(k) for k in ('host','username','password','from_address','app_url'))
 
 
+def verify_sender(config):
+    """Validate SMTP authentication without sending any email."""
+    if not configured(config):
+        raise ValueError('Configure the email sender and private app password first.')
+    with smtplib.SMTP(config['host'],int(config.get('port',587)),timeout=30) as smtp:
+        smtp.starttls(context=ssl.create_default_context())
+        smtp.login(config['username'],config['password'])
+
+
 def assignment_message(task, recipient, config):
     from activity_calendar import calendar_bytes, schedule
     message = EmailMessage()

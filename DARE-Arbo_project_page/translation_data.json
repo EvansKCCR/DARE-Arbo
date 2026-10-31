@@ -1,0 +1,57 @@
+[
+  {
+    "DARE-Arbo domain": "Study design",
+    "Empirical finding": "Target populations were linked to markedly different clinical, community, blood-donor, occupational, and specialized-clinic sampling frames",
+    "Appraisal construct": "Definition of the intended target population"
+  },
+  {
+    "DARE-Arbo domain": "Study design",
+    "Empirical finding": "Facility-based febrile surveillance and probability-based community surveys used structurally different sampling frames",
+    "Appraisal construct": "Alignment between the target population and sampling frame"
+  },
+  {
+    "DARE-Arbo domain": "Study design",
+    "Empirical finding": "Recruitment ranged from multistage probability sampling to consecutive, convenience, and incompletely specified non-probability selection",
+    "Appraisal construct": "Selection of sites, participants, or specimens within the sampling frame"
+  },
+  {
+    "DARE-Arbo domain": "Study design",
+    "Empirical finding": "Some sampling frames and recruitment methods were unclear or insufficiently described",
+    "Appraisal construct": "Evidentiary sufficiency and reconstructability of population selection"
+  },
+  {
+    "DARE-Arbo domain": "Assay Design",
+    "Empirical finding": "Unconfirmed IgG, combined IgM/IgG, and IgM serology were common",
+    "Appraisal construct": "Identification of the primary assay defining the endpoint"
+  },
+  {
+    "DARE-Arbo domain": "Assay Design",
+    "Empirical finding": "Confirmation pathways included neutralization, molecular testing, sequencing, and multiple-method algorithms",
+    "Appraisal construct": "Assessment of endpoint-linked independent confirmation"
+  },
+  {
+    "DARE-Arbo domain": "Assay Design",
+    "Empirical finding": "Hybrid serology/direct-detection pathways contained multiple diagnostic components",
+    "Appraisal construct": "Reconstruction of the complete assay pathway"
+  },
+  {
+    "DARE-Arbo domain": "Assay Design",
+    "Empirical finding": "Some subsequent tests characterized selected specimens rather than defining the reported endpoint",
+    "Appraisal construct": "Separation of confirmation, characterization, quality control, and subset testing"
+  },
+  {
+    "DARE-Arbo domain": "Reporting",
+    "Empirical finding": "Most article-outcomes presented multiple estimates, complex text, or narrative estimates rather than a numeric proportion",
+    "Appraisal construct": "Explicit identification of the endpoint-specific numerator and denominator"
+  },
+  {
+    "DARE-Arbo domain": "Reporting",
+    "Empirical finding": "Reports frequently included multiple subgroups, time points, assay results, or geographical estimates",
+    "Appraisal construct": "Rules for distinguishing and reconstructing multiple article-outcomes within a publication"
+  },
+  {
+    "DARE-Arbo domain": "Reporting",
+    "Empirical finding": "Endpoint information was distributed across narrative and quantitative fields",
+    "Appraisal construct": "Documentation of the evidence supporting each appraisal judgment"
+  }
+]

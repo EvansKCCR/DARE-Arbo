@@ -7,7 +7,7 @@ from drive_store import create_service
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
-from assignment_notifications import configured, process_notifications
+from assignment_notifications import configured, process_notifications, verify_sender
 
 WORKSPACE_CSS = """<style>
 .st-key-pm_workspace [data-testid="stHeading"] :is(h1,h2,h3){color:#24364B}
@@ -112,9 +112,20 @@ def show_assignments(settings, identity, allowed):
                 st.info('No assigned activities match your search.')
         if admin:
             with st.expander('Assignment email status'):
+                email=cfg.get('email',{})
+                st.caption('Sender: '+str(email.get('from_address','Not configured')))
+                if st.button('Verify email connection (no message sent)',disabled=not configured(email),key='pm_check_email'):
+                    try:
+                        if not store.is_admin():raise PermissionError('Administrator access required.')
+                        with st.spinner('Checking the email sender…'):verify_sender(email)
+                    except Exception:
+                        st.error('Email authentication could not be verified. Check the Gmail app password and SMTP settings in this deployment’s secrets.')
+                    else:
+                        st.success('Email sender authentication verified. Assignment notifications can be sent from this deployment.')
                 st.caption('Sent means accepted by the mail server. Claimed or uncertain deliveries are not automatically retried.')
                 if not configured(cfg.get('email',{})):
                     st.info('Assignment notifications are queued in the workbook. Configure the email sender or background worker to deliver them.')
+                    st.caption('Missing email settings: '+', '.join(k for k in ('host','username','password','from_address','app_url') if not email.get(k)))
                 history = snapshot.get('notifications',[])
                 if history:
                     st.dataframe([{'Activity ID':e['activity_id'],'Recipient':e['recipient'],'State':e['state'], 'Updated at':e['updated_at']} for e in history[-20:][::-1]],hide_index=True,width='stretch',key='pm_notification_history')
