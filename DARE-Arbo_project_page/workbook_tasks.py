@@ -40,7 +40,7 @@ class WorkbookTasks:
     def is_admin(self):
         return self.actor() in {x.strip().casefold() for x in self.admins()}
 
-    def read(self):
+    def read(self, require_etag=True):
         self.actor()
         metadata_request = self.service.files().get(fileId=SOURCE_ID, fields='mimeType,parents,trashed,size', supportsAllDrives=True)
         meta = metadata_request.execute()
@@ -48,7 +48,12 @@ class WorkbookTasks:
             raise PermissionError('Task editing requires the original Excel workbook in the project folder.')
         if int(meta.get('size', 0)) > MAX_BYTES:
             raise ValueError('The workbook exceeds the 25 MB limit.')
-        etag = self.versioned().files().get(fileId=SOURCE_ID, fields='etag', supportsAllDrives=True).execute().get('etag')
+        # Read-only views do not need the legacy Drive v2 ETag. Keeping that
+        # optional prevents a display failure when the v2 discovery/ETag call
+        # is unavailable, while every write still requires it below.
+        etag = None
+        if require_etag:
+            etag = self.versioned().files().get(fileId=SOURCE_ID, fields='etag', supportsAllDrives=True).execute().get('etag')
         request = self.service.files().get_media(fileId=SOURCE_ID, supportsAllDrives=True)
         content = request.execute()
         if len(content) > MAX_BYTES:

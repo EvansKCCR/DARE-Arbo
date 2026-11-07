@@ -138,7 +138,7 @@ class MeetingStore(WorkbookTasks):
         if not self.is_admin():raise PermissionError('Only administrators can schedule meetings or send invitations.')
 
     def snapshot(self):
-        actor=self.actor();admin=self.is_admin();content,_=self.read()
+        actor=self.actor();admin=self.is_admin();content,_=self.read(require_etag=False)
         book=load_workbook(BytesIO(content),read_only=True,data_only=True)
         try:
             meetings=read_meetings(book)

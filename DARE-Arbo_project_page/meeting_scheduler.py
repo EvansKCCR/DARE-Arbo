@@ -59,8 +59,15 @@ def calendar_html(meetings,year,month,zone,today):
 def meeting_calendar_view(settings,identity,allowed):
     if not has_full_access(identity(),allowed()):return
     try:snapshot=load_meetings(settings,identity,allowed)
+    except PermissionError as exc:
+        st.error(str(exc))
+        st.button('Retry meeting synchronization',on_click=invalidate_meetings,key='pm_meeting_retry');return
+    except ValueError as exc:
+        st.error(str(exc))
+        st.button('Retry meeting synchronization',on_click=invalidate_meetings,key='pm_meeting_retry');return
     except Exception:
-        st.error('Meetings could not be loaded. Check the Drive connection and Meetings worksheet, then refresh.')
+        logging.getLogger(__name__).exception('Meeting synchronization failed.')
+        st.error('Meetings could not be loaded from the project workbook. Retry synchronization; if the problem continues, ask the administrator to check the app logs.')
         st.button('Retry meeting synchronization',on_click=invalidate_meetings,key='pm_meeting_retry');return
     now=datetime.now(timezone.utc)
     st.subheader('Meeting calendar')

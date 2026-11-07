@@ -37,6 +37,14 @@ class MeetingTests(TestCase):
         self.assertEqual('s',book[MEETINGS]['C2'].data_type)
         book.close()
 
+    def test_read_only_snapshot_does_not_request_legacy_etag(self):
+        original=self.store.read
+        self.store.read=lambda require_etag=True: (_ for _ in ()).throw(RuntimeError('legacy ETag unavailable')) if require_etag else (self.content,None)
+        snapshot=self.store.snapshot()
+        self.assertEqual([],snapshot['meetings'])
+        self.assertEqual([],snapshot['invitations'])
+        self.store.read=original
+
     def test_collaborators_only_see_their_meetings_and_cannot_manage(self):
         created=self.create();mid=created['meeting']['id']
         self.person['email']='one@example.org'
@@ -53,7 +61,7 @@ class MeetingTests(TestCase):
         stale=sha256(self.content).hexdigest();created=self.create()
         with self.assertRaisesRegex(ValueError,'workbook changed'):
             self.store.save_meeting({**self.fields,'title':'Changed'},stale,'admin@example.org',created['meeting']['id'])
-        self.store.read.side_effect=lambda:(self.content,None)
+        self.store.read.side_effect=lambda require_etag=True:(self.content,None)
         with self.assertRaisesRegex(ValueError,'version tag'):self.create({**self.fields,'title':'Second meeting'})
         self.assertEqual(1,len(self.store.snapshot()['meetings']))
 

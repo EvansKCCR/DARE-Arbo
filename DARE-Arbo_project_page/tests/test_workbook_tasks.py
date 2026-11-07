@@ -28,7 +28,7 @@ class WorkbookTaskTests(unittest.TestCase):
         self.service = MagicMock()
         self.store = WorkbookTasks(self.service, lambda: self.person, lambda: self.people, lambda: self.people[:1])
         self.store.version_service = self.service
-        self.store.read = MagicMock(side_effect=lambda: (self.content, 'etag'))
+        self.store.read = MagicMock(side_effect=lambda require_etag=True: (self.content, 'etag' if require_etag else None))
         def update(**kwargs):
             request = MagicMock()
             request.headers = {}
@@ -82,7 +82,7 @@ class WorkbookTaskTests(unittest.TestCase):
 
     def test_no_write_without_etag(self):
         self.store.read.return_value = None
-        self.store.read.side_effect = lambda: (self.content, None)
+        self.store.read.side_effect = lambda require_etag=True: (self.content, None)
         with self.assertRaises(ValueError):
             self.store.save({'progress': 50}, 2, sha256(self.content).hexdigest())
         self.service.files.return_value.update.assert_not_called()
