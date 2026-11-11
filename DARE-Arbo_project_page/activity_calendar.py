@@ -99,7 +99,7 @@ def show_activity_calendar(tasks, today, viewer=None):
         st.write('**Monthly activity agenda**')
         activity_table(sorted(visible,key=lambda t:schedule(t)[0]),today,key='pm_calendar_agenda')
         st.download_button('Download activity calendar (.ics)',calendar_bytes(visible),file_name=f'DARE-Arbo_{year}-{month:02d}.ics',mime='text/calendar',key='pm_calendar_export')
-        st.caption('Import the file into Google Calendar or Outlook. This is a calendar snapshot; download it again after schedule changes.')
+        st.caption('Import the file into Outlook or Teams. This is a calendar snapshot; download it again after schedule changes.')
     missing=sum(not schedule(t) for t in selected)
     if missing:
         st.caption(f'{missing} activities have no usable schedule and remain available in the Activity Register.')

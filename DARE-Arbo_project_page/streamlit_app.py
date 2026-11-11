@@ -8,10 +8,12 @@ import json
 import streamlit as st
 from access import has_full_access
 from drive_store import DriveStore, create_service, ALLOWED
+from supabase_auth import (SupabaseAuthError, configured as supabase_configured,
+    current_identity, send_code, sign_out, verify_code)
 
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_URL = 'https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/'
-INTEREST_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSe5dFJ4mjU7XFID1mlbH_e0r1lHR8sOxIOkEEWdnVB3LBmgBg/viewform?usp=header'
+TEAMS_URL = 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A'
 STUDY = json.loads((ROOT / 'study_data.json').read_text(encoding='utf-8'))
 st.set_page_config(page_title='DARE-Arbo | Study & collaboration', page_icon='🧬', layout='wide')
 
@@ -24,7 +26,7 @@ def settings():
 
 
 def identity():
-    return dict(st.user) | {'is_logged_in': True} if getattr(st.user, 'is_logged_in', False) else {}
+    return current_identity(settings().get('supabase_auth', {}))
 
 
 def allowed():
@@ -94,11 +96,11 @@ def documents():
     st.subheader('Collaborator library')
     st.write('A shared library for approved collaborators. Full access is required to browse, upload or download study documents.')
     if not has_full_access(identity(), allowed()):
-        st.info('Sign in with an approved Google account to access documents. If you are already signed in, contact the project coordinator to request full access.')
+        st.info('Use the approved collaborator email sign-in to access documents. If access is needed, contact the project coordinator.')
         return
-    cfg = settings().get('drive', {})
-    if not all(cfg.get(k) and not cfg[k].startswith(('GOOGLE_', 'OWNER_')) for k in ('client_id', 'client_secret', 'refresh_token')):
-        st.warning('The document library is awaiting administrator connection to Google Drive.')
+    cfg = settings().get('microsoft', {})
+    if not cfg.get('drive_id'):
+        st.warning('The document library is awaiting Microsoft OneDrive configuration.')
         return
     try:
         store = DriveStore(create_service(cfg), identity, allowed)
@@ -126,7 +128,7 @@ def documents():
                 left, right = st.columns([4, 1])
                 left.write(f['name'])
                 left.caption(f"Updated {f.get('modifiedTime', '')[:10]} · {f.get('mimeType', '').split('.')[-1]}")
-                if f['mimeType'] in ('application/vnd.google-apps.folder', 'application/vnd.google-apps.shortcut'):
+                if f['mimeType'] == 'application/vnd.microsoft.graph.folder':
                     right.caption('Folder / shortcut')
                 elif right.button('Prepare download', key=f"prepare_{f['id']}"):
                     with st.spinner('Preparing your document…'):
@@ -134,13 +136,13 @@ def documents():
                     # Payload exists only during this authorized run, never in a shared cache.
                     st.download_button('Download document', content, file_name=name, mime=mime,
                         key=f"download_{f['id']}", on_click='rerun')
-        st.caption('Google Docs and Slides export as PDF; Google Sheets export as Excel. Native Google exports have a 10 MB API limit. Other files have a 25 MB limit. This library lists files directly inside the project folder.')
+        st.caption('Files are read directly from the DARE-Arbo OneDrive folder. Uploads and downloads are limited to 25 MB per file.')
     except (PermissionError, ValueError) as exc:
         st.error(str(exc))
     except Exception:
         # Do not render exceptions containing credentials or Drive response data.
-        logging.getLogger(__name__).warning('Project Drive operation failed; check provider configuration and access.')
-        st.error('Google Drive could not complete this request. Please retry or ask the administrator to check the connection, folder permissions and storage quota.')
+        logging.getLogger(__name__).warning('Project OneDrive operation failed; check provider configuration and access.')
+        st.error('Microsoft OneDrive could not complete this request. Please retry or ask the administrator to check the private OneDrive connection, folder permissions and storage quota.')
 
 
 st.markdown('''<style>
@@ -202,28 +204,57 @@ with st.sidebar:
     page = st.radio('Explore the study', ['Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents', 'Project management', 'Feedback'], label_visibility='collapsed')
     st.divider()
     config = settings()
-    if getattr(st.user, 'is_logged_in', False):
-        st.write(st.user.get('name', 'Signed-in collaborator'))
+    signed_in = identity()
+    supabase_cfg = config.get('supabase_auth', {})
+    if signed_in.get('is_logged_in'):
+        st.write(signed_in.get('name', 'Signed-in collaborator'))
         st.caption('Full access' if has_full_access(identity(), allowed()) else 'Visitor access')
-        st.button('Sign out', on_click=st.logout)
-    elif config.get('auth', {}).get('client_id') and not config['auth']['client_id'].startswith('GOOGLE_'):
-        st.button('Sign in with Google', on_click=st.login, width='stretch')
+        st.button('Sign out', on_click=sign_out, args=[supabase_cfg])
+    elif supabase_configured(supabase_cfg):
+        with st.expander('Collaborator sign-in'):
+            with st.form('supabase_send_code'):
+                email = st.text_input('Approved collaborator email', key='supabase_email')
+                send_requested = st.form_submit_button('Send one-time code')
+            if send_requested:
+                from supabase_auth import normalize_email
+                try:
+                    normalized = normalize_email(email)
+                    if normalized in {str(x).strip().casefold() for x in allowed()}:
+                        send_code(supabase_cfg, normalized)
+                    st.session_state['supabase_code_notice'] = 'If this email is approved and registered, a one-time code will be sent.'
+                except (ValueError, SupabaseAuthError) as exc:
+                    st.error(str(exc))
+            if st.session_state.get('supabase_code_notice'):
+                st.info(st.session_state['supabase_code_notice'])
+            pending = st.session_state.get('supabase_pending_email')
+            if pending:
+                with st.form('supabase_verify_code'):
+                    st.caption('Enter the code sent to ' + pending)
+                    code = st.text_input('One-time code', max_chars=8, type='password')
+                    verify_requested = st.form_submit_button('Verify code and sign in', type='primary')
+                if verify_requested:
+                    try:
+                        verify_code(supabase_cfg, pending, code, allowed())
+                        st.session_state.pop('supabase_code_notice', None)
+                        st.rerun()
+                    except (ValueError, PermissionError, SupabaseAuthError) as exc:
+                        st.error(str(exc))
     else:
-        st.caption('Public study information is available. Collaborator sign-in will be enabled after administrator setup.')
+        st.caption('Public study information is available. Collaborator sign-in is awaiting administrator setup.')
     with st.expander('How sign-in works'):
-        st.write('1. Choose Sign in with Google when sign-in is enabled.\n2. Use the Google email approved by the project administrator.\n3. Approved accounts receive full access to the document library; other accounts retain visitor access.')
-        st.caption('Submitting the collaborator form or appearing on the team page does not grant document access. Contact the project coordinator for approval. If your session expires, sign out and sign in again.')
+        st.write('1. Enter the email address approved by the project administrator.\n2. Enter the one-time code sent to that address.\n3. Approved collaborators can access the project workspace; visitors can still read public study information.')
+        st.caption('Access is invite-only. The account must be approved in the app and registered with the authentication service. Private files still require the app administrator to maintain the OneDrive connection.')
 
 if page == 'Overview':
     st.markdown('''<div class="hero"><div class="eyebrow">Arbovirus surveillance · Methodological development</div>
     <h1>DARE-Arbo</h1><p>An endpoint-specific appraisal framework for strengthening the interpretation and synthesis of arbovirus surveillance evidence.</p></div>''', unsafe_allow_html=True)
     st.header('About DARE-Arbo')
     st.write((ROOT / 'Overview.txt').read_text(encoding='utf-8-sig').strip())
-    workspace_action, interest_action = st.columns(2)
+    workspace_action, teams_action = st.columns(2)
     with workspace_action:
         st.link_button('Open the digital workspace ↗', WORKSPACE_URL, type='primary', width='stretch')
-    with interest_action:
-        st.link_button('Express interest in collaborating ↗', INTEREST_URL, width='stretch')
+    with teams_action:
+        st.link_button('Join the DARE-Arbo Teams community ↗', TEAMS_URL, width='stretch')
     for column, value, label in zip(st.columns(4), ['3', '12', '47', '36'], ['Appraisal domains', 'Scored components', 'Planned pilot article-outcomes', 'Pilot publications']):
         column.metric(label, value)
     st.header('Make each estimate interpretable')
@@ -311,7 +342,8 @@ elif page == 'Collaborate':
     opening, closing = date(2026, 9, 22), date(2026, 10, 31)
     today = date.today()
     st.info('Expression-of-interest window: 22 September–31 October 2026. ' + ('The scheduled window is open.' if opening <= today <= closing else 'The scheduled window has closed.' if today > closing else 'The scheduled window has not yet opened.'))
-    st.link_button('Complete the expression-of-interest form ↗', INTEREST_URL, type='primary')
+    st.link_button('Open the DARE-Arbo Teams community ↗', TEAMS_URL, type='primary')
+    st.caption('Project files and collaborator operations are managed in the Microsoft 365 workspace.')
     c1, c2 = st.columns(2)
     with c1:
         st.subheader('Who can contribute?')
@@ -327,7 +359,7 @@ elif page == 'Project management':
 
 elif page == 'Feedback':
     from feedback import show_feedback
-    show_feedback(settings, create_service)
+    show_feedback(settings, create_service, identity, allowed)
 else:
     documents()
 

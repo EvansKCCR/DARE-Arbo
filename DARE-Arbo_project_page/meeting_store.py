@@ -1,11 +1,9 @@
-"""Meeting schedules and durable invitation delivery in the Drive workbook."""
+"""Meeting schedules and durable invitation delivery in the OneDrive workbook."""
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 import json
 import re
-import smtplib
-import ssl
 from urllib.parse import urlsplit
 from uuid import uuid4, UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -73,7 +71,7 @@ def clean_fields(fields):
         url=urlsplit(link)
         if url.scheme!='https' or not url.hostname or '.' not in url.hostname or url.username or url.password or len(link)>2000 or any(c.isspace() or ord(c)<32 for c in link):raise ValueError()
         _=url.port
-    except ValueError:raise ValueError('Paste the full HTTPS meeting link, for example https://meet.google.com/abc-defg-hij.') from None
+    except ValueError:raise ValueError('Paste the full HTTPS meeting link.') from None
     try:ZoneInfo(clean['timezone'])
     except (ZoneInfoNotFoundError,ValueError):raise ValueError('Choose a valid IANA time zone, for example Africa/Accra.') from None
     start,end=instant(clean['start']),instant(clean['end'])
@@ -224,7 +222,7 @@ class MeetingStore(WorkbookTasks):
 
 def send_invitations(store,config,meeting_id,event_ids=None):
     store.require_admin()
-    if not configured(config):raise ValueError('Configure the existing email sender before sending invitations.')
+    if not configured(config):raise ValueError('Configure the Microsoft Graph sender address and app URL before sending invitations.')
     snapshot=store.snapshot()
     meeting=next((m for m in snapshot['meetings'] if m['id']==meeting_id),None)
     if not meeting or email_address(config['from_address'])!=meeting['organizer']:
@@ -232,18 +230,17 @@ def send_invitations(store,config,meeting_id,event_ids=None):
     events=[e for e in snapshot['invitations'] if e['meeting_id']==meeting_id and e['state']=='queued' and (event_ids is None or e['event_id'] in event_ids)]
     result=dict(sent=0,skipped=0,uncertain=0)
     if not events:return result
-    # Authentication errors leave every invitation queued and safe to try again.
-    with smtplib.SMTP(config['host'],int(config.get('port',587)),timeout=30) as smtp:
-        smtp.starttls(context=ssl.create_default_context());smtp.login(config['username'],config['password'])
-        for event in events:
-            claimed=store.claim_invitation(event['event_id'],config['from_address'])
-            if not claimed:result['skipped']+=1;continue
-            try:
-                message=invitation_message(claimed['meeting'],claimed['recipient'],claimed['method'],config)
-                store.require_admin();smtp.send_message(message)
-            except Exception:state='failed_or_uncertain';result['uncertain']+=1
-            else:state='sent';result['sent']+=1
-            try:store.finish_invitation(event['event_id'],state)
-            except Exception:result['uncertain']+=1
-            if state=='failed_or_uncertain':break  # Preserve unattempted recipients in the queue.
+    # Mailbox mismatch or Graph permission failures leave invitations queued.
+    store.service.verify_mail_sender(config['from_address'])
+    for event in events:
+        claimed=store.claim_invitation(event['event_id'],config['from_address'])
+        if not claimed:result['skipped']+=1;continue
+        try:
+            message=invitation_message(claimed['meeting'],claimed['recipient'],claimed['method'],config)
+            store.require_admin();store.service.send_message(message)
+        except Exception:state='failed_or_uncertain';result['uncertain']+=1
+        else:state='sent';result['sent']+=1
+        try:store.finish_invitation(event['event_id'],state)
+        except Exception:result['uncertain']+=1
+        if state=='failed_or_uncertain':break  # Preserve unattempted recipients in the queue.
     return result

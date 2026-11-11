@@ -1,9 +1,7 @@
-"""Workbook assignment queue and SMTP delivery. No separate persistent store."""
+"""Workbook assignment queue and Microsoft Graph mail delivery."""
 from datetime import datetime, timezone
 from uuid import uuid4
 import re
-import smtplib
-import ssl
 from collections import Counter
 from email.message import EmailMessage
 
@@ -90,41 +88,22 @@ def read_events(book):
 
 
 def configured(config):
-    return all(isinstance(config.get(k),str) and config[k].strip() for k in ('host','username','password','from_address','app_url'))
+    return all(isinstance(config.get(k),str) and config[k].strip() for k in ('from_address','app_url'))
 
 
 def sender_secret_status(settings):
-    """Report presence and key placement only. Never return a secret value."""
+    """Return sender configuration status without exposing credential values."""
     section=settings.get('email',{})
-    if not isinstance(section,dict):
-        return {'password':'Email section is not a TOML table','alternate_keys':[]}
-    value=section.get('password')
-    if value is None:
-        state='Missing email.password key'
-    elif not isinstance(value,str):
-        state='email.password must be a quoted string'
-    elif not value.strip():
-        state='email.password is empty'
-    else:
-        state='email.password is present (value hidden)'
-    alternates=[]
-    for key in ('app_password','smtp_password','gmail_app_password'):
-        if section.get(key):alternates.append('email.'+key)
-    for key in ('SMTP_PASSWORD','GMAIL_APP_PASSWORD'):
-        if settings.get(key):alternates.append(key)
-    for name in ('smtp','gmail','auth'):
-        nested=settings.get(name,{})
-        if isinstance(nested,dict) and nested.get('password'):alternates.append(name+'.password')
-    return {'password':state,'alternate_keys':alternates}
+    ready=isinstance(section,dict) and bool(section.get('from_address')) and bool(section.get('app_url'))
+    return {'password':'Microsoft Graph sender configured' if ready else 'Missing email.from_address or email.app_url',
+            'alternate_keys':[]}
 
 
-def verify_sender(config):
-    """Validate SMTP authentication without sending any email."""
+def verify_sender(config, service):
+    """Verify the signed-in Microsoft Graph mailbox without sending email."""
     if not configured(config):
-        raise ValueError('Configure the email sender and private app password first.')
-    with smtplib.SMTP(config['host'],int(config.get('port',587)),timeout=30) as smtp:
-        smtp.starttls(context=ssl.create_default_context())
-        smtp.login(config['username'],config['password'])
+        raise ValueError('Configure the Microsoft Graph sender address and app URL first.')
+    return service.verify_mail_sender(config['from_address'])
 
 
 def assignment_message(task, recipient, config):
@@ -145,7 +124,7 @@ def assignment_message(task, recipient, config):
 
 
 def process_notifications(store, config, send=False, event_ids=None):
-    """SMTP acceptance is recorded as sent; uncertain attempts are never retried automatically."""
+    """Graph acceptance is recorded as sent; uncertain attempts are never retried automatically."""
     if not store.is_admin():
         raise PermissionError('Administrator access is required for notification delivery.')
     events = [e for e in store.notification_events() if e['state'] == 'queued'
@@ -153,8 +132,6 @@ def process_notifications(store, config, send=False, event_ids=None):
     result = dict(queued=len(events), sent=0, skipped=0, uncertain=0)
     if not send or not configured(config):
         return result
-    # Fail before claiming if SMTP configuration is malformed.
-    port = int(config.get('port',587))
     for event in events:
         claimed = store.claim_assignment(event['event_id'])
         if not claimed:
@@ -162,10 +139,7 @@ def process_notifications(store, config, send=False, event_ids=None):
             continue
         try:
             message = assignment_message(claimed['task'], claimed['recipient'], config)
-            with smtplib.SMTP(config['host'], port, timeout=30) as smtp:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.login(config['username'], config['password'])
-                smtp.send_message(message)
+            store.service.send_message(message)
         except Exception:
             result['uncertain'] += 1
             state = 'failed_or_uncertain'

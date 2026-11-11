@@ -2,7 +2,7 @@
 import argparse
 import os
 import time
-from drive_store import create_service
+from drive_store import GraphClient, refresh_access_token
 from workbook_tasks import WorkbookTasks
 from assignment_notifications import configured, process_notifications
 
@@ -12,13 +12,14 @@ def run(send=False):
     approved={e.strip().casefold() for e in os.environ['TASK_ALLOWED_EMAILS'].split(',') if e.strip()}
     if owner not in approved:
         raise ValueError('The administrator must be an approved collaborator.')
-    drive={key:os.environ['DRIVE_'+key.upper()] for key in ('client_id','client_secret','refresh_token')}
-    email={key:os.environ.get(env,'') for key,env in [('host','SMTP_HOST'),('port','SMTP_PORT'),('username','SMTP_USERNAME'),('password','SMTP_PASSWORD'),('from_address','SMTP_FROM'),('app_url','TASK_APP_URL')]}
-    email['port']=email['port'] or 587
+    microsoft={'client_id':os.environ['MS_CLIENT_ID'],'client_secret':os.environ.get('MS_CLIENT_SECRET',''),
+        'refresh_token':os.environ['MS_REFRESH_TOKEN'],'drive_id':os.environ.get('MS_DRIVE_ID','5e3948114b4b5428')}
+    email={'from_address':os.environ.get('MAIL_FROM',owner),'app_url':os.environ.get('TASK_APP_URL','')}
     if send and not configured(email):
-        raise ValueError('Configure the SMTP sender before enabling delivery.')
-    actor=lambda:dict(email=owner,is_logged_in=True,email_verified=True,iss='https://accounts.google.com',exp=time.time()+300)
-    store=WorkbookTasks(create_service(drive),actor,lambda:approved,lambda:[owner])
+        raise ValueError('Configure MAIL_FROM and TASK_APP_URL before enabling delivery.')
+    actor=lambda:dict(email=owner,is_logged_in=True,tid='9188040d-6c67-4c5b-b112-36a304b66dad',iss='https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0',exp=time.time()+300)
+    service=GraphClient(refresh_access_token(microsoft),microsoft)
+    store=WorkbookTasks(service,actor,lambda:approved,lambda:[owner])
     if send:
         store.sync_assignments()
     result=process_notifications(store,email,send=send)

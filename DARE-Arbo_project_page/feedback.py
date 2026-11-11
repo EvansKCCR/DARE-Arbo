@@ -1,8 +1,9 @@
 """Public, write-only feedback: fixed destination and no document-read access."""
 from datetime import datetime, timezone
-from io import BytesIO
 import re
 import uuid
+from access import has_full_access
+from drive_store import FOLDER_ID
 
 CATEGORIES = ['Suggestion', 'Report a problem', 'Content correction', 'Other comment']
 PAGES = ['General', 'Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents']
@@ -24,8 +25,6 @@ def validate_feedback(category, page, comment, name='', email=''):
 
 
 def save_feedback(service, category, page, comment, name='', email=''):
-    from googleapiclient.http import MediaIoBaseUpload
-    from drive_store import FOLDER_ID
     fields = validate_feedback(category, page, comment, name, email)
     now = datetime.now(timezone.utc)
     reference = uuid.uuid4().hex
@@ -37,24 +36,20 @@ def save_feedback(service, category, page, comment, name='', email=''):
     ])
     # Public callers can only create this bounded text record, never choose a file ID,
     # folder, MIME type, filename or permissions, or read other submissions.
-    service.files().create(
-        body={'name': f'Feedback_{now:%Y%m%d_%H%M%S}_{reference}.txt', 'parents': [FOLDER_ID]},
-        media_body=MediaIoBaseUpload(BytesIO(body.encode('utf-8')), mimetype='text/plain', resumable=False),
-        fields='id', supportsAllDrives=True,
-    ).execute()
+    service.upload(FOLDER_ID, f'Feedback_{now:%Y%m%d_%H%M%S}_{reference}.txt', body.encode('utf-8'), 'text/plain')
     return reference
 
 
-def show_feedback(settings, create_service):
+def show_feedback(settings, create_service, identity, allowed):
     import time
     import streamlit as st
     st.title('Feedback')
-    st.write('Share a suggestion, report a problem, or tell us how this project page could be improved. No sign-in is required.')
-    st.caption('Comments are saved privately in the project Drive folder and can be reviewed by collaborators with full document access. Name and email are optional and are not verified. Please do not include passwords or sensitive participant information.')
-    config = settings().get('drive', {})
-    ready = all(config.get(k) and not config[k].startswith(('GOOGLE_', 'OWNER_')) for k in ('client_id', 'client_secret', 'refresh_token'))
+    st.write('Share a suggestion, report a problem, or tell us how this project page could be improved.')
+    st.caption('Comments are saved privately in the project OneDrive folder. Name and email are optional. Please do not include passwords or sensitive participant information.')
+    config = settings().get('microsoft', {})
+    ready = bool(config.get('drive_id') and has_full_access(identity(), allowed()))
     if not ready:
-        st.info('Feedback submission is awaiting the project administrator’s Google Drive connection setup.')
+        st.info('Sign in with an approved Microsoft account to submit feedback.')
     with st.form('visitor_feedback', clear_on_submit=False):
         category = st.selectbox('Feedback type', CATEGORIES)
         page = st.selectbox('Which page is this about?', PAGES)

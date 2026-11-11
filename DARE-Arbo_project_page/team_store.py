@@ -6,10 +6,8 @@ from uuid import uuid4
 import warnings
 from openpyxl import load_workbook
 from PIL import Image, ImageOps
-from googleapiclient.http import MediaIoBaseUpload
 from workbook_tasks import WorkbookTasks, MIME
-from drive_store import FOLDER_ID, MAX_BYTES
-from sheet_dashboard import SOURCE_ID
+from drive_store import FOLDER_ID, WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID
 
 FIELDS = {'name':'Name','initials':'Initial','affiliation':'Affiliation','expertise':'Experience','position':'Position'}
 LIMITS = {'name':160,'initials':20,'affiliation':500,'expertise':3000,'position':300}
@@ -75,16 +73,19 @@ def public_blob(service, file_id, portrait=False):
     # app-uploaded, explicitly published portraits may be read publicly.
     if not portrait and file_id!=SOURCE_ID:
         raise PermissionError('This is not the public team source.')
-    meta=service.files().get(fileId=file_id,fields='mimeType,parents,trashed,size,appProperties',supportsAllDrives=True).execute()
+    meta=service.get_item(file_id)
     limit=4*1024*1024 if portrait else MAX_BYTES
-    if meta.get('trashed') or FOLDER_ID not in meta.get('parents',[]) or int(meta.get('size',0))>limit:
+    parent=meta.get('parentReference',{}).get('id')
+    expected_parent=FOLDER_ID if portrait else WORKBOOK_FOLDER_ID
+    if meta.get('deleted') or parent!=expected_parent or int(meta.get('size',0))>limit:
         raise PermissionError('The team resource is unavailable.')
+    mime=meta.get('file',{}).get('mimeType','')
     if portrait:
-        if meta.get('mimeType')!='image/png' or meta.get('appProperties',{}).get('purpose')!='public_team_portrait':
+        if mime!='image/png' or not meta.get('name','').startswith('Team_portrait_'):
             raise PermissionError('This image was not published as a team portrait.')
-    elif meta.get('mimeType')!=MIME:
+    elif mime!=MIME:
         raise ValueError('The team source must remain an Excel workbook.')
-    data=service.files().get_media(fileId=file_id,supportsAllDrives=True).execute()
+    data=service.download(file_id)
     if len(data)>limit:
         raise ValueError('The team resource exceeds its size limit.')
     return data
@@ -105,7 +106,7 @@ class TeamProfiles(WorkbookTasks):
         photo=normalize_portrait(portrait) if portrait else None
         content,etag=self.read()
         if not etag:
-            raise ValueError('Drive did not provide a version tag. Reload before publishing a profile.')
+            raise ValueError('OneDrive did not provide a version tag. Reload before publishing a profile.')
         if sha256(content).hexdigest()!=version:
             raise ValueError('The workbook changed. Reload profiles before saving; your current text has not been published.')
         members=parse_team(content)
@@ -115,9 +116,7 @@ class TeamProfiles(WorkbookTasks):
         photo_id=None
         if photo:
             self.actor()
-            photo_id=self.service.files().create(body={'name':'Team_portrait_'+str(uuid4())+'.png','parents':[FOLDER_ID],
-                'appProperties':{'purpose':'public_team_portrait'}},media_body=MediaIoBaseUpload(BytesIO(photo),mimetype='image/png'),
-                fields='id',supportsAllDrives=True).execute()['id']
+            photo_id=self.service.upload(FOLDER_ID,'Team_portrait_'+str(uuid4())+'.png',photo,'image/png')['id']
         def change(register,column,header_row):
             sheet=register.parent['Team_members']
             for cells in sheet.iter_rows():

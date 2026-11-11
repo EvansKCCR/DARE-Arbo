@@ -1,13 +1,12 @@
-"""Authorized task edits in the single Drive-hosted project workbook."""
+"""Authorized task edits in the shared OneDrive project workbook."""
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 import re
 from openpyxl import load_workbook
-from googleapiclient.http import MediaIoBaseUpload
 from access import has_full_access
-from drive_store import FOLDER_ID, MAX_BYTES
-from sheet_dashboard import SOURCE_ID, parse_register, parse_date
+from drive_store import WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID
+from sheet_dashboard import parse_register, parse_date
 from assignment_notifications import initialize_tracking, record_assignment, read_events, TRACKING, QUEUE
 
 STATUSES = ['Not started', 'Planned / update', 'In progress', 'Under review', 'Completed', 'Blocked']
@@ -22,14 +21,6 @@ def emails(value):
 class WorkbookTasks:
     def __init__(self, service, identity, allowed, admins):
         self.service, self.identity, self.allowed, self.admins = service, identity, allowed, admins
-        self.version_service = None
-
-    def versioned(self):
-        if self.version_service is None:
-            from googleapiclient.discovery import build
-            # v2 exposes file ETags explicitly; v3 omits them on this workbook.
-            self.version_service = build('drive', 'v2', http=self.service._http, cache_discovery=False)
-        return self.version_service
 
     def actor(self):
         who = self.identity()
@@ -42,20 +33,14 @@ class WorkbookTasks:
 
     def read(self, require_etag=True):
         self.actor()
-        metadata_request = self.service.files().get(fileId=SOURCE_ID, fields='mimeType,parents,trashed,size', supportsAllDrives=True)
-        meta = metadata_request.execute()
-        if meta.get('trashed') or FOLDER_ID not in meta.get('parents', []) or meta['mimeType'] != MIME:
+        meta = self.service.get_item(SOURCE_ID)
+        parent = meta.get('parentReference', {}).get('id')
+        if meta.get('deleted') or parent != WORKBOOK_FOLDER_ID or meta.get('file', {}).get('mimeType') != MIME:
             raise PermissionError('Task editing requires the original Excel workbook in the project folder.')
         if int(meta.get('size', 0)) > MAX_BYTES:
             raise ValueError('The workbook exceeds the 25 MB limit.')
-        # Read-only views do not need the legacy Drive v2 ETag. Keeping that
-        # optional prevents a display failure when the v2 discovery/ETag call
-        # is unavailable, while every write still requires it below.
-        etag = None
-        if require_etag:
-            etag = self.versioned().files().get(fileId=SOURCE_ID, fields='etag', supportsAllDrives=True).execute().get('etag')
-        request = self.service.files().get_media(fileId=SOURCE_ID, supportsAllDrives=True)
-        content = request.execute()
+        etag = meta.get('eTag') if require_etag else None
+        content = self.service.download(SOURCE_ID)
         if len(content) > MAX_BYTES:
             raise ValueError('The workbook exceeds the 25 MB limit.')
         return content, etag
@@ -78,7 +63,7 @@ class WorkbookTasks:
 
     def write(self, content, etag, change):
         if not etag:
-            raise ValueError('Drive did not provide a version tag. Editing is disabled to protect concurrent workbook changes.')
+            raise ValueError('OneDrive did not provide a version tag. Editing is disabled to protect concurrent workbook changes.')
         book = load_workbook(BytesIO(content))
         try:
             sheet = book['Activity Register']
@@ -100,12 +85,8 @@ class WorkbookTasks:
         finally:
             book.close()
         self.actor()
-        request = self.versioned().files().update(fileId=SOURCE_ID,
-            media_body=MediaIoBaseUpload(BytesIO(out.getvalue()), mimetype=MIME, resumable=False),
-            fields='id', supportsAllDrives=True)
-        request.headers['If-Match'] = etag
         try:
-            request.execute()
+            self.service.update_item(SOURCE_ID, out.getvalue(), etag, MIME)
         except Exception as exc:
             if getattr(getattr(exc, 'resp', None), 'status', None) == 412:
                 raise ValueError('The workbook changed. Refresh before saving again.') from None

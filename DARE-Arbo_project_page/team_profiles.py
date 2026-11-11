@@ -19,14 +19,14 @@ def fetch_public_team(config):
 
 
 def load_team(settings, study, force=False):
-    config=settings().get('drive',{})
+    config=settings().get('microsoft',{})
     scope=sha256(str(sorted(config.items())).encode()).hexdigest()
     old=st.session_state.get('team_snapshot')
     if old and old['scope']==scope and not force and time.monotonic()-old['loaded']<60:
         return old
     try:
-        if not all(config.get(k) for k in ('client_id','client_secret','refresh_token')):
-            raise ValueError('Drive not configured')
+        if not config.get('drive_id'):
+            raise ValueError('OneDrive not configured')
         data={**fetch_public_team(config),'live':True}
     except Exception:
         logging.getLogger(__name__).warning('Public team synchronization unavailable.')
@@ -52,7 +52,7 @@ def portrait_bytes(member,settings,root):
         if cached and time.monotonic()-cached[0]<60:
             return cached[1]
         try:
-            data=public_blob(create_service(settings().get('drive',{})),photo_id,portrait=True)
+            data=public_blob(create_service(settings().get('microsoft',{})),photo_id,portrait=True)
             cache[photo_id]=(time.monotonic(),data)
             return data
         except Exception:
@@ -113,7 +113,7 @@ def admin_team(settings,identity,allowed,study):
     if identity()['email'].strip().casefold() not in {e.strip().casefold() for e in admins}:return
     st.divider();st.subheader('Manage team profiles')
     st.caption('Administrator access · Saved profile text and portraits are visible to all visitors.')
-    scope=identity()['email'].casefold()+str(sorted(allowed()))+str(admins)+str(cfg.get('drive',{}))
+    scope=identity()['email'].casefold()+str(sorted(allowed()))+str(admins)+str(cfg.get('microsoft',{}))
     scope=sha256(scope.encode()).hexdigest()
     current=st.session_state.get('team_editor_snapshot')
     if not current or current['editor_scope']!=scope:
@@ -124,7 +124,7 @@ def admin_team(settings,identity,allowed,study):
         st.session_state['team_form_generation']=st.session_state.get('team_form_generation',0)+1
         st.rerun()
     if not current['live'] or not current.get('version'):
-        st.info('Restore the live Drive connection before editing profiles.')
+        st.info('Sign in with an approved email code to edit team profiles.')
         return
     if st.session_state.pop('team_saved',False):st.success('Team profile published. Visitors see the update on their next refresh.')
     options={m['profile_id']:m for m in current['members']}
@@ -144,14 +144,14 @@ def admin_team(settings,identity,allowed,study):
     if submitted:
         fields=dict(name=name,initials=initials,position=position,affiliation=affiliation,expertise=expertise,featured=featured)
         try:
-            store=TeamProfiles(create_service(cfg['drive']),identity,allowed,lambda:admins)
+            store=TeamProfiles(create_service(cfg['microsoft']),identity,allowed,lambda:admins)
             with st.spinner('Publishing team profile…'):
                 store.save_profile(fields,member.get('row'),current['version'],photo.getvalue() if photo else None)
         except (ValueError,PermissionError) as exc:
             st.error(str(exc))
         except Exception:
             logging.getLogger(__name__).warning('Team profile publication failed.')
-            st.error('The profile could not be published. Check the Drive connection and reload before retrying.')
+            st.error('The profile could not be published. Check administrator OneDrive configuration and folder access, then reload before retrying.')
         else:
             invalidate_team()
             st.session_state.pop('team_editor_snapshot',None)

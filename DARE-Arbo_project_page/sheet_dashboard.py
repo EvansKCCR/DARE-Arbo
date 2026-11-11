@@ -1,4 +1,4 @@
-"""Live, read-only study dashboard backed by the project Drive workbook."""
+"""Live study dashboard backed by the project OneDrive workbook."""
 from datetime import date, datetime, timezone
 from html import escape
 from io import BytesIO
@@ -7,12 +7,10 @@ import time
 from hashlib import sha256
 import streamlit as st
 from openpyxl import load_workbook
-from google.auth.exceptions import RefreshError
 from access import has_full_access
-from drive_store import DriveStore, create_service
+from drive_store import create_service, SOURCE_ID
 
-SOURCE_ID = '1Pmf6ZYq3HyooclARiVtZFqYtI6f-sNQx'
-SOURCE_URL = f'https://docs.google.com/spreadsheets/d/{SOURCE_ID}/edit#gid=1783506628'
+SOURCE_URL = f'https://onedrive.live.com/?id={SOURCE_ID}&cid=5e3948114b4b5428'
 
 
 def parse_date(value):
@@ -101,7 +99,7 @@ def snapshot_scope(settings, identity, allowed):
     from access import require_full_access
     require_full_access(identity(), allowed())
     cfg = settings()
-    source = str(sorted(cfg.get('drive', {}).items()))
+    source = str(sorted(cfg.get('microsoft', {}).items()))
     roles = str(cfg.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com']))
     return sha256((identity()['email'].strip().casefold() + str(sorted(allowed())) + source + roles).encode()).hexdigest()
 
@@ -116,11 +114,17 @@ def load_snapshot(settings, identity, allowed, refresh=False, allow_expired=Fals
     cached = st.session_state.get('pm_snapshot')
     if cached and not refresh and (allow_expired or time.monotonic() - cached['loaded'] < 60):
         return cached
-    config = settings().get('drive', {})
-    if not all(config.get(k) for k in ('client_id', 'client_secret', 'refresh_token')):
-        raise ValueError('Drive connection is not configured.')
+    config = settings().get('microsoft', {})
+    if not config.get('drive_id'):
+        raise ValueError('Microsoft OneDrive connection is not configured.')
     try:
-        _, _, content = DriveStore(create_service(config), identity, allowed).download(SOURCE_ID)
+        service = create_service(config)
+        item = service.get_item(SOURCE_ID)
+        content = service.download(SOURCE_ID)
+        if item.get('deleted') or item.get('parentReference', {}).get('id') != config.get('workbook_folder_id'):
+            raise PermissionError('The configured workbook is outside the project folder.')
+        if int(item.get('size', 0)) > 25 * 1024 * 1024:
+            raise ValueError('The project workbook exceeds the 25 MB limit.')
         tasks, issues = parse_register(content)
         from assignment_notifications import read_events
         book = load_workbook(BytesIO(content), read_only=True, data_only=True)
@@ -159,12 +163,9 @@ def show_sheet_dashboard(settings, identity, allowed, view='Overview'):
         return
     try:
         snapshot = load_snapshot(settings, identity, allowed)
-    except RefreshError:
-        st.error('Google Drive authorization has expired or been revoked. Ask the administrator to reconnect the folder-owner account.')
-        return
     except Exception:
         logging.getLogger(__name__).warning('Study workbook could not be synchronized.')
-        st.error('The workbook could not be synchronized. Check the Drive connection and Activity Register headers, then retry.')
+        st.error('The workbook could not be synchronized. Check collaborator access, the administrator OneDrive connection and Activity Register headers, then retry.')
         st.button('Retry synchronization', key='pm_retry_' + view)
         return
     sync_header(snapshot, settings, identity, allowed, view)

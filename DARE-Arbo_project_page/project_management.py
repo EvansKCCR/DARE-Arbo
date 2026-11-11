@@ -1,4 +1,4 @@
-"""Research operations workspace backed exclusively by the Drive workbook."""
+"""Research operations workspace backed exclusively by the OneDrive workbook."""
 from datetime import date, datetime, timezone
 import logging
 import streamlit as st
@@ -59,6 +59,8 @@ def show_project_management(settings, identity, allowed):
         st.title('Project Management')
         st.write('Study coordination, milestones, deliverables and implementation progress')
         st.caption('Administrator workspace' if admin else 'Research collaborator workspace')
+        st.link_button('Open DARE-Arbo Teams community ↗', 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A')
+        st.caption('Tasks, meetings, team profiles and project documents are stored in the shared OneDrive workbook and folder. Collaborators sign in with an approved email code; the app administrator maintains the private OneDrive connection.')
         # Native tabs switch without rerunning or unmounting an open editing form.
         tabs = st.tabs(['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings'])
         for tab, view in zip(tabs[:3], ['Overview', 'Activity Register', 'Study Timeline']):
@@ -78,7 +80,7 @@ def show_assignments(settings, identity, allowed):
     try:
         snapshot = load_snapshot(settings, identity, allowed, allow_expired=True)
         cfg = settings()
-        store = WorkbookTasks(create_service(cfg['drive']), identity, allowed,
+        store = WorkbookTasks(create_service(cfg['microsoft']), identity, allowed,
             lambda: cfg.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com']))
         admin = store.is_admin()
         tasks = [t for t in snapshot['tasks'] if admin or identity()['email'].strip().casefold() in emails(t['assignee'])]
@@ -118,21 +120,19 @@ def show_assignments(settings, identity, allowed):
                 email=cfg.get('email',{})
                 st.caption('Sender: '+str(email.get('from_address','Not configured')))
                 secret_status=sender_secret_status(cfg)
-                st.caption('Runtime secret check: '+secret_status['password'])
-                if secret_status['alternate_keys']:
-                    st.info('A password value exists under another setting: '+', '.join(secret_status['alternate_keys'])+'. This app reads email.password. Check key placement in Secrets; values are not shown or changed here.')
-                if st.button('Verify email connection (no message sent)',disabled=not configured(email),key='pm_check_email'):
+                st.caption('Notification provider: '+secret_status['password'])
+                if st.button('Verify Microsoft sender (no message sent)',disabled=not configured(email),key='pm_check_email'):
                     try:
                         if not store.is_admin():raise PermissionError('Administrator access required.')
-                        with st.spinner('Checking the email sender…'):verify_sender(email)
+                        with st.spinner('Checking the Microsoft mailbox…'):verify_sender(email,store.service)
                     except Exception:
-                        st.error('Email authentication could not be verified. Check the Gmail app password and SMTP settings in this deployment’s secrets.')
+                        st.error('Microsoft Graph could not verify the notification mailbox. Check the administrator OneDrive/mail connection, Mail.Send and User.Read permissions, and the configured sender address.')
                     else:
-                        st.success('Email sender authentication verified. Assignment notifications can be sent from this deployment.')
-                st.caption('Sent means accepted by the mail server. Claimed or uncertain deliveries are not automatically retried.')
+                        st.success('Microsoft mailbox verified. Assignment notifications can be sent from this deployment.')
+                st.caption('Sent means accepted by Microsoft Graph. Claimed or uncertain deliveries are not automatically retried.')
                 if not configured(cfg.get('email',{})):
                     st.info('Assignment notifications are queued in the workbook. Configure the email sender or background worker to deliver them.')
-                    st.caption('Missing email settings: '+', '.join(k for k in ('host','username','password','from_address','app_url') if not email.get(k)))
+                    st.caption('Missing email settings: '+', '.join(k for k in ('from_address','app_url') if not email.get(k)))
                 history = snapshot.get('notifications',[])
                 if history:
                     st.dataframe([{'Activity ID':e['activity_id'],'Recipient':e['recipient'],'State':e['state'], 'Updated at':e['updated_at']} for e in history[-20:][::-1]],hide_index=True,width='stretch',key='pm_notification_history')
@@ -150,7 +150,7 @@ def show_assignments(settings, identity, allowed):
             st.caption('To change activities, use Keep draft and choose another below the form. Reloading a draft deliberately discards its local edits.')
     except Exception:
         logging.getLogger(__name__).warning('Workbook activities could not be loaded.')
-        st.error('Activities could not be loaded. Check the Drive connection, then retry.')
+        st.error('Activities could not be loaded. Check collaborator access and the administrator OneDrive connection, then retry.')
         st.button('Retry loading activities')
 
 
@@ -168,7 +168,7 @@ def task_form(store, collaborators, task, admin, email_config=None):
             st.subheader('Responsibility and assignment')
             left, right = st.columns(2)
             fields['owner'] = left.text_input('Responsible owner', initial.get('owner',''), help='Human-readable names or initials.')
-            fields['assignee'] = right.text_input('Assignee email', initial.get('assignee',''), help='Exact approved Google addresses, separated by commas. This controls editing permissions.')
+            fields['assignee'] = right.text_input('Assignee email', initial.get('assignee',''), help='Exact approved collaborator email addresses, separated by commas. This controls editing permissions.')
             st.caption('Authorized assignees: ' + ', '.join(sorted(collaborators)))
             st.subheader('Schedule and milestones')
             left, right = st.columns(2)
