@@ -237,11 +237,15 @@ with st.sidebar:
                 st.warning('Sign-in is not configured yet. The administrator must add the Supabase publishable key under [supabase_auth] in Streamlit Secrets. The project URL is already set for this app.')
             if send_requested:
                 from supabase_auth import normalize_email
+                st.session_state.pop('supabase_pending_email', None)
+                st.session_state.pop('supabase_code_notice', None)
                 try:
                     normalized = normalize_email(email)
                     if normalized in {str(x).strip().casefold() for x in allowed()}:
                         send_code(supabase_cfg, normalized)
-                    st.session_state['supabase_code_notice'] = 'If this email is approved and registered, a one-time code will be sent.'
+                        st.session_state['supabase_code_notice'] = 'If this email is registered, a one-time code has been requested. Check your inbox and spam folder.'
+                    else:
+                        st.error('This address is not approved for collaborator access. Ask the project administrator to add it to Streamlit Secrets under [access].full_access_emails.')
                 except (ValueError, SupabaseAuthError) as exc:
                     st.error(str(exc))
             if st.session_state.get('supabase_code_notice'):
