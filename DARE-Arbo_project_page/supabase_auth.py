@@ -15,7 +15,10 @@ class SupabaseAuthError(RuntimeError):
 
 
 def configured(config):
-    return bool(config.get('url') and (config.get('publishable_key') or config.get('anon_key')))
+    url = str(config.get('url') or '').strip().rstrip('/')
+    key = str(config.get('publishable_key') or config.get('anon_key') or '').strip()
+    return (url.startswith('https://') and '.supabase.co' in url and bool(key)
+            and not key.startswith(('YOUR_', 'sb_secret_')) and 'YOUR-PROJECT-REF' not in url)
 
 
 def normalize_email(email):
@@ -39,7 +42,26 @@ def _request(config, path, payload, access_token=None):
     except httpx.HTTPError:
         raise SupabaseAuthError('The sign-in service could not be reached. Please retry.') from None
     if response.status_code >= 400:
-        raise SupabaseAuthError('The email code could not be processed. Check the code or contact the project administrator.')
+        try:
+            error_data = response.json()
+        except ValueError:
+            error_data = {}
+        if not isinstance(error_data, dict):
+            error_data = {}
+        error_code = str(error_data.get('code') or error_data.get('error_code') or '').casefold()
+        if response.status_code in (401, 403):
+            message = 'Supabase rejected the project key. Ask the administrator to check the Supabase project URL and publishable key in Streamlit Secrets.'
+        elif response.status_code == 429 or error_code in ('over_email_send_rate_limit', 'email_address_not_authorized'):
+            message = 'Supabase could not send the code. Configure a production SMTP sender in Supabase Authentication, then try again.'
+        elif path.endswith('/otp') and (response.status_code in (400, 422) or error_code in ('user_not_found', 'signup_disabled')):
+            message = 'This address must be invited or added under Supabase Authentication → Users, and the email OTP template must include {{ .Token }}.'
+        elif path.endswith('/verify') and response.status_code in (400, 422):
+            message = 'That code is invalid or expired. Request a new one and enter the latest code.'
+        elif response.status_code >= 500:
+            message = 'Supabase Auth could not deliver or verify the code. Check the Auth email/SMTP settings and retry.'
+        else:
+            message = 'Supabase could not process the request. Check the Auth provider settings or ask the project administrator.'
+        raise SupabaseAuthError(message)
     try:
         return response.json() if response.content else {}
     except ValueError:

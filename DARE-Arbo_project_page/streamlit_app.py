@@ -14,6 +14,7 @@ from supabase_auth import (SupabaseAuthError, configured as supabase_configured,
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_URL = 'https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/'
 TEAMS_URL = 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A'
+SUPABASE_PROJECT_URL = 'https://hoazlvirvcbobjvjewlv.supabase.co'
 STUDY = json.loads((ROOT / 'study_data.json').read_text(encoding='utf-8'))
 st.set_page_config(page_title='DARE-Arbo | Study & collaboration', page_icon='🧬', layout='wide')
 
@@ -26,7 +27,15 @@ def settings():
 
 
 def identity():
-    return current_identity(settings().get('supabase_auth', {}))
+    return current_identity(supabase_config())
+
+
+def supabase_config(config=None):
+    config = config if config is not None else settings()
+    auth = dict(config.get('supabase_auth', {}))
+    if not auth.get('url') or 'YOUR-PROJECT-REF' in str(auth.get('url')):
+        auth['url'] = SUPABASE_PROJECT_URL
+    return auth
 
 
 def allowed():
@@ -189,6 +198,15 @@ st.markdown('''<style>
 [data-testid="stMain"] [data-testid="stTable"] th{background:#E3EEE7;color:#164C3B;border-bottom:2px solid #80A995}
 [data-testid="stAlertContainer"]{background:#EDF4F0;color:#203C31;border-left:4px solid #43866B}
 [data-testid="stAlertContainer"] a{color:#164C3B}
+[data-testid="stSidebar"] [data-testid="stAlertContainer"]{background:#F1F5F2!important;color:#203C31!important;border-left-color:#43866B!important}
+[data-testid="stSidebar"] [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stAlertContainer"] p,
+[data-testid="stSidebar"] [data-testid="stAlertContainer"] span{color:#203C31!important}
+[data-testid="stSidebar"] [data-testid="stExpander"] details{background:#24151A;border-radius:8px}
+[data-testid="stSidebar"] [data-testid="stExpander"] details summary{color:#FFFFFF!important}
+[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stMarkdownContainer"]{color:#F6F3F2}
+[data-testid="stSidebar"] [data-testid="stTextInput"] label{color:#FFFFFF!important}
+[data-testid="stSidebar"] [data-testid="stTextInput"] input{color:#202124!important;background:#FFFFFF!important}
 a:focus-visible,button:focus-visible{outline:3px solid #CE1126;outline-offset:3px}
 @media(max-width:640px){.hero{padding:1.5rem}.hero h1{font-size:2.3rem}}
 </style>''', unsafe_allow_html=True)
@@ -205,16 +223,18 @@ with st.sidebar:
     st.divider()
     config = settings()
     signed_in = identity()
-    supabase_cfg = config.get('supabase_auth', {})
+    supabase_cfg = supabase_config(config)
     if signed_in.get('is_logged_in'):
         st.write(signed_in.get('name', 'Signed-in collaborator'))
         st.caption('Full access' if has_full_access(identity(), allowed()) else 'Visitor access')
         st.button('Sign out', on_click=sign_out, args=[supabase_cfg])
-    elif supabase_configured(supabase_cfg):
+    else:
         with st.expander('Collaborator sign-in'):
             with st.form('supabase_send_code'):
                 email = st.text_input('Approved collaborator email', key='supabase_email')
-                send_requested = st.form_submit_button('Send one-time code')
+                send_requested = st.form_submit_button('Send one-time code', type='primary', disabled=not supabase_configured(supabase_cfg))
+            if not supabase_configured(supabase_cfg):
+                st.warning('Sign-in is not configured yet. The administrator must add the Supabase publishable key under [supabase_auth] in Streamlit Secrets. The project URL is already set for this app.')
             if send_requested:
                 from supabase_auth import normalize_email
                 try:
@@ -239,8 +259,6 @@ with st.sidebar:
                         st.rerun()
                     except (ValueError, PermissionError, SupabaseAuthError) as exc:
                         st.error(str(exc))
-    else:
-        st.caption('Public study information is available. Collaborator sign-in is awaiting administrator setup.')
     with st.expander('How sign-in works'):
         st.write('1. Enter the email address approved by the project administrator.\n2. Enter the one-time code sent to that address.\n3. Approved collaborators can access the project workspace; visitors can still read public study information.')
         st.caption('Access is invite-only. The account must be approved in the app and registered with the authentication service. Private files still require the app administrator to maintain the OneDrive connection.')
