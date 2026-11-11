@@ -1,5 +1,6 @@
 """Research operations workspace backed exclusively by the OneDrive workbook."""
 from datetime import date, datetime, timezone
+import json
 import logging
 import streamlit as st
 from access import has_full_access
@@ -80,37 +81,44 @@ def show_project_management(settings, identity, allowed):
 
 
 def show_storage_migration(settings):
-    st.subheader('Copy project files to private Supabase Storage')
-    st.write('This one-time copy includes the complete DARE-Arbo OneDrive folder, including the project workbooks, private documents, feedback records and archive files. Source files stay in OneDrive until the copy has been checked.')
+    st.subheader('Upload local project files to private Supabase Storage')
+    st.write('Upload a ZIP archive of the project folder or select files from your computer. Files are placed in the private Supabase bucket and checked with SHA-256 after upload. Microsoft credentials are not needed.')
     config = settings()
-    microsoft = config.get('microsoft', {})
     supabase = config.get('supabase_storage', {})
-    source_ready = bool(microsoft.get('client_id') and microsoft.get('refresh_token') and microsoft.get('folder_id'))
     destination_ready = supabase_storage_configured(supabase)
-    if not source_ready:
-        st.warning('The existing OneDrive owner connection is not configured.')
     if not destination_ready:
         st.info('Add the Supabase project URL, server-side Secret key and bucket name to Streamlit Secrets under [supabase_storage]. Keep the Secret key out of GitHub and chat.')
     if destination_ready:
         bucket = str(supabase.get('bucket'))
-        st.caption(f'Destination bucket: {bucket} · files will remain private.')
-    progress_bar = st.progress(0.0, text='Ready to copy')
+        st.caption(f'Destination bucket: {bucket} · uploaded files remain private. ZIPs may contain folders; supported formats include PDF, Office documents, CSV, TXT, HTML, JSON and images.')
+    uploads = st.file_uploader(
+        'Choose project files or a ZIP archive',
+        type=['zip', 'pdf', 'docx', 'xlsx', 'pptx', 'csv', 'tsv', 'txt', 'png', 'jpg', 'jpeg', 'html', 'json'],
+        accept_multiple_files=True, key='pm_supabase_local_uploads',
+        disabled=not destination_ready,
+        help='Maximum 50 MB per file; ZIP uploads and their uncompressed contents are limited to 250 MB.',
+    )
+    replace_existing = st.checkbox('Replace files in Supabase when the same path already exists', value=False,
+                                   disabled=not destination_ready)
+    progress_bar = st.progress(0.0, text='Ready to upload')
     status = st.empty()
     def update_progress(count, name):
-        progress_bar.progress(min(count / 100, 0.95), text=f'Copied and verified {count} file(s) · {name}')
-        status.caption('Each file is checked against its SHA-256 checksum before the migration is marked complete.')
-    if st.button('Copy and verify OneDrive files', type='primary', disabled=not (source_ready and destination_ready), key='pm_copy_to_supabase'):
+        progress_bar.progress(min(count / max(len(uploads or []), 1), 0.95), text=f'Uploaded and verified {count} file(s) · {name}')
+        status.caption('Each file is checked against its SHA-256 checksum. Keep a copy of the manifest for migration records.')
+    if st.button('Upload and verify selected files', type='primary', disabled=not (destination_ready and uploads), key='pm_local_upload_to_supabase'):
         try:
-            with st.spinner('Copying the project folder and verifying each file…'):
-                manifest = SupabaseStorage(supabase).copy_onedrive_tree(
-                    create_service(microsoft), FOLDER_ID, progress=update_progress)
+            with st.spinner('Uploading files to private Supabase Storage and verifying checksums…'):
+                manifest = SupabaseStorage(supabase).upload_local_files(
+                    uploads, replace_existing=replace_existing, progress=update_progress)
         except Exception:
-            logging.getLogger(__name__).exception('OneDrive to Supabase migration failed.')
-            st.error('The copy did not finish. OneDrive files remain unchanged; review the app logs and retry after correcting the connection or bucket settings.')
+            logging.getLogger(__name__).exception('Local project file upload to Supabase failed.')
+            st.error('The upload did not finish. Review the app configuration and retry; existing source files on your computer are unchanged.')
         else:
-            progress_bar.progress(1.0, text=f"Copied and checksum-verified {manifest['file_count']} files")
-            st.success('Copy complete. The source OneDrive files are still intact. Save this report before removing the Microsoft connection.')
+            progress_bar.progress(1.0, text=f"Uploaded and checksum-verified {manifest['file_count']} files")
+            st.success('Upload complete. Supabase contains a private, checksum-verified copy. The project document library and management dashboard still need to be switched to Supabase before Microsoft access can be removed.')
             st.dataframe([{'File': item['path'], 'Bytes': item['size'], 'SHA-256': item['sha256']} for item in manifest['files']], hide_index=True, width='stretch')
+            st.download_button('Download checksum manifest', json.dumps(manifest, indent=2),
+                               file_name='dare_arbo_supabase_migration_manifest.json', mime='application/json')
 
 
 @st.fragment

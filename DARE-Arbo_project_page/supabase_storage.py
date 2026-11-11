@@ -1,14 +1,19 @@
-"""Private Supabase Storage and one-time OneDrive migration helpers."""
+"""Private Supabase Storage helpers for local and OneDrive migration."""
 from datetime import datetime, timezone
 from hashlib import sha256
+from io import BytesIO
 import json
+from pathlib import PurePosixPath
+import zipfile
 from urllib.parse import quote
 
 import httpx
 
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-MIGRATION_MARKER = "_migration/onedrive_copy.json"
+MAX_ARCHIVE_BYTES = 250 * 1024 * 1024
+MIGRATION_MARKER = "_migration/local_upload.json"
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv", ".txt", ".png", ".jpg", ".jpeg", ".html", ".json"}
 
 
 class SupabaseStorageError(RuntimeError):
@@ -120,6 +125,84 @@ class SupabaseStorage:
             raise SupabaseStorageError("No files were found in the OneDrive project folder.")
         manifest = {
             "source": "OneDrive project folder",
+            "copied_at": datetime.now(timezone.utc).isoformat(),
+            "file_count": len(entries),
+            "files": entries,
+        }
+        self.upload(MIGRATION_MARKER, json.dumps(manifest, indent=2).encode("utf-8"),
+                    "application/json", upsert=True)
+        return manifest
+
+    @staticmethod
+    def _safe_archive_path(name):
+        normalized = str(name or "").replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if path.is_absolute() or not normalized or any(part in ("", ".", "..") for part in path.parts):
+            raise SupabaseStorageError("The ZIP contains an unsafe file path.")
+        if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise SupabaseStorageError(f"The ZIP contains an unsupported file type: {path.name}.")
+        return str(path)
+
+    def upload_local_files(self, files, *, root_name="DARE-Arbo", replace_existing=False, progress=None):
+        """Upload local Streamlit file objects or ZIP files and verify each object."""
+        self.ensure_private_bucket()
+        entries = []
+        staged = {}
+
+        def add(path, content):
+            path = self._safe_archive_path(path)
+            if len(content) > MAX_UPLOAD_BYTES:
+                raise SupabaseStorageError(f"{PurePosixPath(path).name} exceeds the 50 MB per-file limit.")
+            if path in staged:
+                raise SupabaseStorageError(f"The upload contains the same path more than once: {path}.")
+            staged[path] = content
+
+        total_archive_bytes = 0
+        for uploaded in files:
+            filename = str(getattr(uploaded, "name", "") or "").replace("\\", "/").split("/")[-1]
+            payload = uploaded.getvalue() if hasattr(uploaded, "getvalue") else bytes(uploaded)
+            if filename.lower().endswith(".zip"):
+                if len(payload) > MAX_ARCHIVE_BYTES:
+                    raise SupabaseStorageError("A ZIP upload must be no larger than 250 MB.")
+                try:
+                    archive = zipfile.ZipFile(BytesIO(payload))
+                except (zipfile.BadZipFile, OSError):
+                    raise SupabaseStorageError(f"{filename} is not a valid ZIP archive.") from None
+                with archive:
+                    for member in archive.infolist():
+                        if member.is_dir():
+                            continue
+                        # Reject Unix symlinks, encrypted members, and oversized archives before extraction.
+                        if (member.external_attr >> 16) & 0o170000 == 0o120000 or member.flag_bits & 1:
+                            raise SupabaseStorageError("The ZIP contains a link or encrypted entry; upload regular files only.")
+                        total_archive_bytes += member.file_size
+                        if total_archive_bytes > MAX_ARCHIVE_BYTES:
+                            raise SupabaseStorageError("The uncompressed ZIP contents exceed the 250 MB total limit.")
+                        relative = self._safe_archive_path(member.filename)
+                        add(f"{root_name}/{relative}", archive.read(member))
+            else:
+                if not filename:
+                    raise SupabaseStorageError("An uploaded file has no filename.")
+                add(f"{root_name}/{filename}", payload)
+
+        if not staged:
+            raise SupabaseStorageError("Choose one or more files or a ZIP archive with supported project files.")
+
+        for path, content in staged.items():
+            digest = sha256(content).hexdigest()
+            try:
+                self.upload(path, content, upsert=replace_existing)
+                copied = self.download(path)
+            except SupabaseStorageError:
+                raise
+            if sha256(copied).hexdigest() != digest:
+                raise SupabaseStorageError(f"Checksum verification failed for {PurePosixPath(path).name}.")
+            entries.append({"path": path, "size": len(content), "sha256": digest})
+            if progress:
+                progress(len(entries), PurePosixPath(path).name)
+
+        manifest = {
+            "source": "local file upload",
             "copied_at": datetime.now(timezone.utc).isoformat(),
             "file_count": len(entries),
             "files": entries,
