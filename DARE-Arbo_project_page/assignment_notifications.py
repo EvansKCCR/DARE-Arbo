@@ -1,9 +1,10 @@
-"""Workbook assignment queue and Microsoft Graph mail delivery."""
+"""Workbook assignment queue and SMTP email delivery."""
 from datetime import datetime, timezone
 from uuid import uuid4
 import re
 from collections import Counter
 from email.message import EmailMessage
+from smtp_mailer import SMTPMailer, configured as smtp_configured
 
 TRACKING = 'Assignment Tracking'
 QUEUE = 'Assignment Notifications'
@@ -88,22 +89,23 @@ def read_events(book):
 
 
 def configured(config):
-    return all(isinstance(config.get(k),str) and config[k].strip() for k in ('from_address','app_url'))
+    return all(isinstance(config.get(k),str) and config[k].strip() for k in ('from_address','app_url','password'))
 
 
 def sender_secret_status(settings):
     """Return sender configuration status without exposing credential values."""
     section=settings.get('email',{})
-    ready=isinstance(section,dict) and bool(section.get('from_address')) and bool(section.get('app_url'))
-    return {'password':'Microsoft Graph sender configured' if ready else 'Missing email.from_address or email.app_url',
+    ready=isinstance(section,dict) and smtp_configured(section)
+    missing=[key for key in ('from_address','app_url','password') if not section.get(key)] if isinstance(section,dict) else ['from_address','app_url','password']
+    return {'password':'SMTP sender configured' if ready else 'Missing email.'+', email.'.join(missing),
             'alternate_keys':[]}
 
 
-def verify_sender(config, service):
-    """Verify the signed-in Microsoft Graph mailbox without sending email."""
+def verify_sender(config):
+    """Verify the configured SMTP sender without sending email."""
     if not configured(config):
-        raise ValueError('Configure the Microsoft Graph sender address and app URL first.')
-    return service.verify_mail_sender(config['from_address'])
+        raise ValueError('Configure the SMTP sender address, app URL and password first.')
+    return SMTPMailer(config).verify_mail_sender(config['from_address'])
 
 
 def assignment_message(task, recipient, config):
@@ -124,7 +126,7 @@ def assignment_message(task, recipient, config):
 
 
 def process_notifications(store, config, send=False, event_ids=None):
-    """Graph acceptance is recorded as sent; uncertain attempts are never retried automatically."""
+    """SMTP acceptance is recorded as sent; uncertain attempts are never retried automatically."""
     if not store.is_admin():
         raise PermissionError('Administrator access is required for notification delivery.')
     events = [e for e in store.notification_events() if e['state'] == 'queued'
@@ -139,7 +141,7 @@ def process_notifications(store, config, send=False, event_ids=None):
             continue
         try:
             message = assignment_message(claimed['task'], claimed['recipient'], config)
-            store.service.send_message(message)
+            SMTPMailer(config).send_message(message)
         except Exception:
             result['uncertain'] += 1
             state = 'failed_or_uncertain'

@@ -1,11 +1,11 @@
 """Run daily on a persistent scheduler. Dry-run by default; --send sends email."""
 import argparse
 import os
-import time
 from datetime import date, timedelta
 from email.message import EmailMessage
-from drive_store import GraphClient, refresh_access_token
 from workbook_tasks import WorkbookTasks, emails
+from workspace_storage import SupabaseWorkspaceService
+from smtp_mailer import SMTPMailer
 
 
 def eligible(task, approved, today):
@@ -21,12 +21,10 @@ def run(send=False):
     owner = os.environ.get('TASK_ADMIN_EMAIL', 'evansasamoahadu@gmail.com').strip().casefold()
     if owner not in approved:
         raise ValueError('The reminder administrator must be in TASK_ALLOWED_EMAILS.')
-    config = {'client_id':os.environ['MS_CLIENT_ID'],'client_secret':os.environ.get('MS_CLIENT_SECRET',''),
-              'refresh_token':os.environ['MS_REFRESH_TOKEN'],'drive_id':os.environ.get('MS_DRIVE_ID','5e3948114b4b5428')}
-    # This trusted scheduler uses the owner's existing grant; no browser session is needed.
-    identity = lambda: dict(email=owner, is_logged_in=True, tid='9188040d-6c67-4c5b-b112-36a304b66dad',
-                            iss='https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0', exp=time.time()+300)
-    service = GraphClient(refresh_access_token(config), config)
+    config = {'url':os.environ['SUPABASE_URL'],'secret_key':os.environ['SUPABASE_SECRET_KEY'],
+              'bucket':os.environ.get('SUPABASE_BUCKET','dare-arbo-private')}
+    identity = lambda: dict(email=owner, is_logged_in=True)
+    service = SupabaseWorkspaceService(config)
     store = WorkbookTasks(service, identity, lambda: approved, lambda: [owner])
     tasks = store.list()
     count = 0
@@ -36,7 +34,7 @@ def run(send=False):
         if not send:
             count += 1
             continue
-        # A conditional workbook update records the claim before Graph delivery.
+        # A conditional workbook update records the claim before SMTP delivery.
         claimed = store.claim_reminder(task['id'], today.isoformat())
         if not claimed:
             continue
@@ -46,7 +44,11 @@ def run(send=False):
             message['To'] = ', '.join(sorted(emails(task['assignee']) & approved))
             message['Subject'] = 'DARE-Arbo task reminder'
             message.set_content(f"Task: {task['title']}\nDeadline: {task['due_date']}\nStatus: {task['status']}\nProgress: {task['progress']}%\n\nPlease sign in to Project management to update your task.\n{os.environ['TASK_APP_URL']}\n")
-            service.send_message(message)
+            email_config={'from_address':os.environ.get('MAIL_FROM',owner),'app_url':os.environ['TASK_APP_URL'],
+                'smtp_host':os.environ.get('SMTP_HOST','smtp.gmail.com'),'smtp_port':os.environ.get('SMTP_PORT','587'),
+                'username':os.environ.get('SMTP_USERNAME',os.environ.get('MAIL_FROM',owner)),
+                'password':os.environ['SMTP_PASSWORD']}
+            SMTPMailer(email_config).send_message(message)
             count += 1
         except Exception:
             # The workbook claim is retained to avoid duplicate uncertain deliveries.

@@ -1,4 +1,4 @@
-"""Private Supabase Storage helpers for local and OneDrive migration."""
+"""Private Supabase Storage helpers for the DARE-Arbo workspace."""
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
@@ -119,49 +119,6 @@ class SupabaseStorage:
                        "offset": 0, "sortBy": {"column": "name", "order": "asc"}}, allowed=(200,))
         return response.json()
 
-    def copy_onedrive_tree(self, source, root_folder_id, root_name="DARE-Arbo", progress=None):
-        """Copy a full OneDrive folder tree and verify every copied object's SHA-256."""
-        self.ensure_private_bucket()
-        entries = []
-
-        def scan(folder_id, relative):
-            for item in source.list_children(folder_id):
-                name = str(item.get("name") or "").replace("\\", "/").strip("/")
-                if not name or "/" in name or name in (".", ".."):
-                    raise SupabaseStorageError("A OneDrive item has an unsupported filename; no migration marker was written.")
-                path = relative + "/" + name
-                if item.get("folder"):
-                    scan(item["id"], path)
-                elif item.get("file"):
-                    size = int(item.get("size") or 0)
-                    if size > MAX_UPLOAD_BYTES:
-                        raise SupabaseStorageError(f"{name} exceeds the 50 MB Supabase Storage upload limit.")
-                    content = source.download(item["id"])
-                    digest = sha256(content).hexdigest()
-                    if size and len(content) != size:
-                        raise SupabaseStorageError(f"The source size for {name} changed during migration.")
-                    mime = item.get("file", {}).get("mimeType") or "application/octet-stream"
-                    self.upload(path, content, mime, upsert=True)
-                    copied = self.download(path)
-                    if sha256(copied).hexdigest() != digest:
-                        raise SupabaseStorageError(f"Checksum verification failed for {name}.")
-                    entries.append({"path": path, "size": len(content), "sha256": digest})
-                    if progress:
-                        progress(len(entries), name)
-
-        scan(root_folder_id, root_name)
-        if not entries:
-            raise SupabaseStorageError("No files were found in the OneDrive project folder.")
-        manifest = {
-            "source": "OneDrive project folder",
-            "copied_at": datetime.now(timezone.utc).isoformat(),
-            "file_count": len(entries),
-            "files": entries,
-        }
-        self.upload(MIGRATION_MARKER, json.dumps(manifest, indent=2).encode("utf-8"),
-                    "application/json", upsert=True)
-        return manifest
-
     @staticmethod
     def _safe_archive_path(name):
         normalized = str(name or "").replace("\\", "/")
@@ -180,6 +137,8 @@ class SupabaseStorage:
 
         def add(path, content):
             path = self._safe_archive_path(path)
+            if PurePosixPath(path).name.casefold() == "pilot_articles.zip":
+                raise SupabaseStorageError("Pilot_Articles.zip is shared separately by email and must not be uploaded.")
             if len(content) > MAX_UPLOAD_BYTES:
                 raise SupabaseStorageError(f"{PurePosixPath(path).name} exceeds the 50 MB per-file limit.")
             if path in staged:
@@ -189,6 +148,8 @@ class SupabaseStorage:
         total_archive_bytes = 0
         for uploaded in files:
             filename = str(getattr(uploaded, "name", "") or "").replace("\\", "/").split("/")[-1]
+            if filename.casefold() == "pilot_articles.zip":
+                raise SupabaseStorageError("Pilot_Articles.zip is shared separately by email and must not be uploaded.")
             payload = uploaded.getvalue() if hasattr(uploaded, "getvalue") else bytes(uploaded)
             if filename.lower().endswith(".zip"):
                 if len(payload) > MAX_ARCHIVE_BYTES:

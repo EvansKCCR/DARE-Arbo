@@ -1,17 +1,17 @@
-"""Authorized task edits in the shared OneDrive project workbook."""
+"""Authorized task edits in the private Supabase workbook."""
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 import re
 from openpyxl import load_workbook
 from access import has_full_access
-from drive_store import WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID
+from workspace_storage import WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID, WORKBOOK_MIME
 from sheet_dashboard import parse_register, parse_date
 from assignment_notifications import initialize_tracking, record_assignment, read_events, TRACKING, QUEUE
 
 STATUSES = ['Not started', 'Planned / update', 'In progress', 'Under review', 'Completed', 'Blocked']
 PRIORITIES = ['Low', 'Normal', 'High']
-MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+MIME = WORKBOOK_MIME
 
 
 def emails(value):
@@ -63,7 +63,7 @@ class WorkbookTasks:
 
     def write(self, content, etag, change):
         if not etag:
-            raise ValueError('OneDrive did not provide a version tag. Editing is disabled to protect concurrent workbook changes.')
+            raise ValueError('The Supabase workbook version could not be checked. Editing is disabled to protect concurrent updates.')
         book = load_workbook(BytesIO(content))
         try:
             sheet = book['Activity Register']

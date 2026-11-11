@@ -7,7 +7,7 @@ import warnings
 from openpyxl import load_workbook
 from PIL import Image, ImageOps
 from workbook_tasks import WorkbookTasks, MIME
-from drive_store import FOLDER_ID, WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID
+from workspace_storage import FOLDER_ID, WORKBOOK_FOLDER_ID, MAX_BYTES, SOURCE_ID
 
 FIELDS = {'name':'Name','initials':'Initial','affiliation':'Affiliation','expertise':'Experience','position':'Position'}
 LIMITS = {'name':160,'initials':20,'affiliation':500,'expertise':3000,'position':300}
@@ -71,9 +71,12 @@ def normalize_portrait(content):
 def public_blob(service, file_id, portrait=False):
     # No caller-controlled document endpoint: only the fixed team source and
     # app-uploaded, explicitly published portraits may be read publicly.
-    if not portrait and file_id!=SOURCE_ID:
+    path=str(file_id).replace('\\','/').strip('/')
+    if not portrait and path!=SOURCE_ID:
         raise PermissionError('This is not the public team source.')
-    meta=service.get_item(file_id)
+    if portrait and (not path.startswith(FOLDER_ID+'/Team_portrait_') or not path.endswith('.png')):
+        raise PermissionError('This image was not published as a team portrait.')
+    meta=service.get_item(path)
     limit=4*1024*1024 if portrait else MAX_BYTES
     parent=meta.get('parentReference',{}).get('id')
     expected_parent=FOLDER_ID if portrait else WORKBOOK_FOLDER_ID
@@ -85,7 +88,7 @@ def public_blob(service, file_id, portrait=False):
             raise PermissionError('This image was not published as a team portrait.')
     elif mime!=MIME:
         raise ValueError('The team source must remain an Excel workbook.')
-    data=service.download(file_id)
+    data=service.download(path)
     if len(data)>limit:
         raise ValueError('The team resource exceeds its size limit.')
     return data
@@ -106,7 +109,7 @@ class TeamProfiles(WorkbookTasks):
         photo=normalize_portrait(portrait) if portrait else None
         content,etag=self.read()
         if not etag:
-            raise ValueError('OneDrive did not provide a version tag. Reload before publishing a profile.')
+            raise ValueError('Supabase could not provide a version tag. Reload before publishing a profile.')
         if sha256(content).hexdigest()!=version:
             raise ValueError('The workbook changed. Reload profiles before saving; your current text has not been published.')
         members=parse_team(content)

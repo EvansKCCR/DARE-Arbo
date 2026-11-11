@@ -1,10 +1,10 @@
-"""Research operations workspace backed exclusively by the OneDrive workbook."""
+"""Research operations workspace backed by the private Supabase workbook."""
 from datetime import date, datetime, timezone
 import json
 import logging
 import streamlit as st
 from access import has_full_access
-from drive_store import create_service, FOLDER_ID
+from workspace_storage import SupabaseWorkspaceService
 from supabase_storage import SupabaseStorage, SupabaseStorageError, configured as supabase_storage_configured
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
@@ -61,8 +61,7 @@ def show_project_management(settings, identity, allowed):
         st.title('Project Management')
         st.write('Study coordination, milestones, deliverables and implementation progress')
         st.caption('Administrator workspace' if admin else 'Research collaborator workspace')
-        st.link_button('Open DARE-Arbo Teams community ↗', 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A')
-        st.caption('Collaborators sign in with an approved email code. Project documents and management data are being migrated to private Supabase storage.')
+        st.caption('Collaborators sign in with an approved email code. Project documents and management data are stored in private Supabase storage.')
         # Native tabs switch without rerunning or unmounting an open editing form.
         tab_names = ['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings']
         if admin:
@@ -82,7 +81,7 @@ def show_project_management(settings, identity, allowed):
 
 def show_storage_migration(settings):
     st.subheader('Upload local project files to private Supabase Storage')
-    st.write('Upload a ZIP archive of the project folder or select files from your computer. Files are placed in the private Supabase bucket and checked with SHA-256 after upload. Microsoft credentials are not needed.')
+    st.write('Upload a ZIP archive of the project folder or select files from your computer. Files are placed in the private Supabase bucket and checked with SHA-256 after upload. Pilot_Articles.zip is distributed separately by email and must not be uploaded here.')
     config = settings()
     supabase = config.get('supabase_storage', {})
     destination_ready = supabase_storage_configured(supabase)
@@ -118,7 +117,7 @@ def show_storage_migration(settings):
             st.error('The upload did not finish. Review the app configuration and retry; existing source files on your computer are unchanged.')
         else:
             progress_bar.progress(1.0, text=f"Uploaded and checksum-verified {manifest['file_count']} files")
-            st.success('Upload complete. Supabase contains a private, checksum-verified copy. The project document library and management dashboard still need to be switched to Supabase before Microsoft access can be removed.')
+            st.success('Upload complete. Supabase contains a private, checksum-verified copy. Keep the source files until you confirm the document library and dashboard can open the migrated copies.')
             st.dataframe([{'File': item['path'], 'Bytes': item['size'], 'SHA-256': item['sha256']} for item in manifest['files']], hide_index=True, width='stretch')
             st.download_button('Download checksum manifest', json.dumps(manifest, indent=2),
                                file_name='dare_arbo_supabase_migration_manifest.json', mime='application/json')
@@ -132,7 +131,7 @@ def show_assignments(settings, identity, allowed):
     try:
         snapshot = load_snapshot(settings, identity, allowed, allow_expired=True)
         cfg = settings()
-        store = WorkbookTasks(create_service(cfg['microsoft']), identity, allowed,
+        store = WorkbookTasks(SupabaseWorkspaceService(cfg.get('supabase_storage', {})), identity, allowed,
             lambda: cfg.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com']))
         admin = store.is_admin()
         tasks = [t for t in snapshot['tasks'] if admin or identity()['email'].strip().casefold() in emails(t['assignee'])]
@@ -173,18 +172,18 @@ def show_assignments(settings, identity, allowed):
                 st.caption('Sender: '+str(email.get('from_address','Not configured')))
                 secret_status=sender_secret_status(cfg)
                 st.caption('Notification provider: '+secret_status['password'])
-                if st.button('Verify Microsoft sender (no message sent)',disabled=not configured(email),key='pm_check_email'):
+                if st.button('Verify email sender (no message sent)',disabled=not configured(email),key='pm_check_email'):
                     try:
                         if not store.is_admin():raise PermissionError('Administrator access required.')
-                        with st.spinner('Checking the Microsoft mailbox…'):verify_sender(email,store.service)
+                        with st.spinner('Checking the SMTP sender connection…'):verify_sender(email)
                     except Exception:
-                        st.error('Microsoft Graph could not verify the notification mailbox. Check the administrator OneDrive/mail connection, Mail.Send and User.Read permissions, and the configured sender address.')
+                        st.error('The SMTP sender could not be verified. Check the configured host, port, username, password and sender address in Streamlit Secrets.')
                     else:
-                        st.success('Microsoft mailbox verified. Assignment notifications can be sent from this deployment.')
-                st.caption('Sent means accepted by Microsoft Graph. Claimed or uncertain deliveries are not automatically retried.')
+                        st.success('SMTP sender verified. Assignment notifications can be sent from this deployment.')
+                st.caption('Sent means accepted by the SMTP server. Claimed or uncertain deliveries are not automatically retried.')
                 if not configured(cfg.get('email',{})):
                     st.info('Assignment notifications are queued in the workbook. Configure the email sender or background worker to deliver them.')
-                    st.caption('Missing email settings: '+', '.join(k for k in ('from_address','app_url') if not email.get(k)))
+                    st.caption('Missing email settings: '+', '.join(k for k in ('from_address','app_url','password') if not email.get(k)))
                 history = snapshot.get('notifications',[])
                 if history:
                     st.dataframe([{'Activity ID':e['activity_id'],'Recipient':e['recipient'],'State':e['state'], 'Updated at':e['updated_at']} for e in history[-20:][::-1]],hide_index=True,width='stretch',key='pm_notification_history')
@@ -202,7 +201,7 @@ def show_assignments(settings, identity, allowed):
             st.caption('To change activities, use Keep draft and choose another below the form. Reloading a draft deliberately discards its local edits.')
     except Exception:
         logging.getLogger(__name__).warning('Workbook activities could not be loaded.')
-        st.error('Activities could not be loaded. Check collaborator access and the administrator OneDrive connection, then retry.')
+        st.error('Activities could not be loaded. Check collaborator access and the private Supabase workbook, then retry.')
         st.button('Retry loading activities')
 
 

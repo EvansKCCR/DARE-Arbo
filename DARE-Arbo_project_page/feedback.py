@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import re
 import uuid
 from access import has_full_access
-from drive_store import FOLDER_ID
+from workspace_storage import FOLDER_ID
 
 CATEGORIES = ['Suggestion', 'Report a problem', 'Content correction', 'Other comment']
 PAGES = ['General', 'Overview', 'Framework & methods', 'Team', 'Development workflow', 'Collaborate', 'Project documents']
@@ -40,16 +40,16 @@ def save_feedback(service, category, page, comment, name='', email=''):
     return reference
 
 
-def show_feedback(settings, create_service, identity, allowed):
+def show_feedback(settings, workspace_service, identity, allowed):
     import time
     import streamlit as st
     st.title('Feedback')
     st.write('Share a suggestion, report a problem, or tell us how this project page could be improved.')
-    st.caption('Comments are saved privately in the project OneDrive folder. Name and email are optional. Please do not include passwords or sensitive participant information.')
-    config = settings().get('microsoft', {})
-    ready = bool(config.get('drive_id') and has_full_access(identity(), allowed()))
+    st.caption('Comments are saved privately in Supabase Storage. Name and email are optional. Please do not include passwords or sensitive participant information.')
+    config = settings().get('supabase_storage', {})
+    ready = bool(config.get('url') and config.get('secret_key') and config.get('bucket') and has_full_access(identity(), allowed()))
     if not ready:
-        st.info('Sign in with an approved Microsoft account to submit feedback.')
+        st.info('Sign in with an approved collaborator email to submit feedback.')
     with st.form('visitor_feedback', clear_on_submit=False):
         category = st.selectbox('Feedback type', CATEGORIES)
         page = st.selectbox('Which page is this about?', PAGES)
@@ -67,7 +67,7 @@ def show_feedback(settings, create_service, identity, allowed):
                 st.warning('Please wait a minute before sending another comment.')
                 return
             with st.spinner('Saving your feedback…'):
-                reference = save_feedback(create_service(config), **fields)
+                reference = save_feedback(workspace_service(config), **fields)
             st.session_state['last_feedback_fields'] = fields
             st.session_state['last_feedback_time'] = time.time()
             st.success('Thank you. Your feedback has been saved for the project team.')

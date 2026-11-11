@@ -1,4 +1,4 @@
-"""Meeting schedules and durable invitation delivery in the OneDrive workbook."""
+"""Meeting schedules and durable invitation delivery in the Supabase workbook."""
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from openpyxl import load_workbook
 from workbook_tasks import WorkbookTasks
 from assignment_notifications import table, append_literals, configured
+from smtp_mailer import SMTPMailer
 
 MEETINGS = 'Meetings'
 INVITATIONS = 'Meeting Invitations'
@@ -222,7 +223,7 @@ class MeetingStore(WorkbookTasks):
 
 def send_invitations(store,config,meeting_id,event_ids=None):
     store.require_admin()
-    if not configured(config):raise ValueError('Configure the Microsoft Graph sender address and app URL before sending invitations.')
+    if not configured(config):raise ValueError('Configure the SMTP sender address, app URL and password before sending invitations.')
     snapshot=store.snapshot()
     meeting=next((m for m in snapshot['meetings'] if m['id']==meeting_id),None)
     if not meeting or email_address(config['from_address'])!=meeting['organizer']:
@@ -230,14 +231,15 @@ def send_invitations(store,config,meeting_id,event_ids=None):
     events=[e for e in snapshot['invitations'] if e['meeting_id']==meeting_id and e['state']=='queued' and (event_ids is None or e['event_id'] in event_ids)]
     result=dict(sent=0,skipped=0,uncertain=0)
     if not events:return result
-    # Mailbox mismatch or Graph permission failures leave invitations queued.
-    store.service.verify_mail_sender(config['from_address'])
+    # Sender mismatch or SMTP login failures leave invitations queued.
+    mailer=SMTPMailer(config)
+    mailer.verify_mail_sender(config['from_address'])
     for event in events:
         claimed=store.claim_invitation(event['event_id'],config['from_address'])
         if not claimed:result['skipped']+=1;continue
         try:
             message=invitation_message(claimed['meeting'],claimed['recipient'],claimed['method'],config)
-            store.require_admin();store.service.send_message(message)
+            store.require_admin();mailer.send_message(message)
         except Exception:state='failed_or_uncertain';result['uncertain']+=1
         else:state='sent';result['sent']+=1
         try:store.finish_invitation(event['event_id'],state)

@@ -8,25 +8,24 @@ import logging
 import time
 import streamlit as st
 from access import has_full_access
-from drive_store import create_service
+from workspace_storage import SupabaseWorkspaceService, SOURCE_ID
 from team_store import FIELDS, LIMITS, PORTRAITS, TeamProfiles, parse_team, public_blob
 
 
 def fetch_public_team(config):
-    from sheet_dashboard import SOURCE_ID
-    data=public_blob(create_service(config),SOURCE_ID)
+    data=public_blob(SupabaseWorkspaceService(config),SOURCE_ID)
     return dict(members=parse_team(data),version=sha256(data).hexdigest(),synced=datetime.now(timezone.utc))
 
 
 def load_team(settings, study, force=False):
-    config=settings().get('microsoft',{})
+    config=settings().get('supabase_storage',{})
     scope=sha256(str(sorted(config.items())).encode()).hexdigest()
     old=st.session_state.get('team_snapshot')
     if old and old['scope']==scope and not force and time.monotonic()-old['loaded']<60:
         return old
     try:
-        if not config.get('drive_id'):
-            raise ValueError('OneDrive not configured')
+        if not config.get('url') or not config.get('secret_key') or not config.get('bucket'):
+            raise ValueError('Supabase Storage is not configured.')
         data={**fetch_public_team(config),'live':True}
     except Exception:
         logging.getLogger(__name__).warning('Public team synchronization unavailable.')
@@ -52,7 +51,7 @@ def portrait_bytes(member,settings,root):
         if cached and time.monotonic()-cached[0]<60:
             return cached[1]
         try:
-            data=public_blob(create_service(settings().get('microsoft',{})),photo_id,portrait=True)
+            data=public_blob(SupabaseWorkspaceService(settings().get('supabase_storage',{})),photo_id,portrait=True)
             cache[photo_id]=(time.monotonic(),data)
             return data
         except Exception:
@@ -113,7 +112,7 @@ def admin_team(settings,identity,allowed,study):
     if identity()['email'].strip().casefold() not in {e.strip().casefold() for e in admins}:return
     st.divider();st.subheader('Manage team profiles')
     st.caption('Administrator access · Saved profile text and portraits are visible to all visitors.')
-    scope=identity()['email'].casefold()+str(sorted(allowed()))+str(admins)+str(cfg.get('microsoft',{}))
+    scope=identity()['email'].casefold()+str(sorted(allowed()))+str(admins)+str(cfg.get('supabase_storage',{}))
     scope=sha256(scope.encode()).hexdigest()
     current=st.session_state.get('team_editor_snapshot')
     if not current or current['editor_scope']!=scope:
@@ -144,14 +143,14 @@ def admin_team(settings,identity,allowed,study):
     if submitted:
         fields=dict(name=name,initials=initials,position=position,affiliation=affiliation,expertise=expertise,featured=featured)
         try:
-            store=TeamProfiles(create_service(cfg['microsoft']),identity,allowed,lambda:admins)
+            store=TeamProfiles(SupabaseWorkspaceService(cfg['supabase_storage']),identity,allowed,lambda:admins)
             with st.spinner('Publishing team profile…'):
                 store.save_profile(fields,member.get('row'),current['version'],photo.getvalue() if photo else None)
         except (ValueError,PermissionError) as exc:
             st.error(str(exc))
         except Exception:
             logging.getLogger(__name__).warning('Team profile publication failed.')
-            st.error('The profile could not be published. Check administrator OneDrive configuration and folder access, then reload before retrying.')
+            st.error('The profile could not be published. Check Supabase Storage configuration and access, then reload before retrying.')
         else:
             invalidate_team()
             st.session_state.pop('team_editor_snapshot',None)

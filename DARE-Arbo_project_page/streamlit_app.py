@@ -7,13 +7,12 @@ import logging
 import json
 import streamlit as st
 from access import has_full_access
-from drive_store import DriveStore, create_service, ALLOWED
+from workspace_storage import SupabaseWorkspaceService, SupabaseDocumentStore, ALLOWED
 from supabase_auth import (SupabaseAuthError, configured as supabase_configured,
     current_identity, send_code, sign_out, verify_code)
 
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_URL = 'https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/'
-TEAMS_URL = 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A'
 SUPABASE_PROJECT_URL = 'https://hoazlvirvcbobjvjewlv.supabase.co'
 STUDY = json.loads((ROOT / 'study_data.json').read_text(encoding='utf-8'))
 st.set_page_config(page_title='DARE-Arbo | Study & collaboration', page_icon='🧬', layout='wide')
@@ -107,12 +106,12 @@ def documents():
     if not has_full_access(identity(), allowed()):
         st.info('Use the approved collaborator email sign-in to access documents. If access is needed, contact the project coordinator.')
         return
-    cfg = settings().get('microsoft', {})
-    if not cfg.get('drive_id'):
-        st.warning('The document library is awaiting Microsoft OneDrive configuration.')
+    cfg = settings().get('supabase_storage', {})
+    if not all(cfg.get(key) for key in ('url', 'secret_key', 'bucket')):
+        st.warning('The private document library is awaiting Supabase Storage configuration.')
         return
     try:
-        store = DriveStore(create_service(cfg), identity, allowed)
+        store = SupabaseDocumentStore(SupabaseWorkspaceService(cfg), identity, allowed)
         with st.expander('Upload a document', expanded=True):
             st.caption('Up to 25 MB per file. Uploads create new files; existing files are never replaced.')
             with st.form('upload', clear_on_submit=True):
@@ -137,21 +136,19 @@ def documents():
                 left, right = st.columns([4, 1])
                 left.write(f['name'])
                 left.caption(f"Updated {f.get('modifiedTime', '')[:10]} · {f.get('mimeType', '').split('.')[-1]}")
-                if f['mimeType'] == 'application/vnd.microsoft.graph.folder':
-                    right.caption('Folder / shortcut')
-                elif right.button('Prepare download', key=f"prepare_{f['id']}"):
+                if right.button('Prepare download', key=f"prepare_{f['id']}"):
                     with st.spinner('Preparing your document…'):
                         name, mime, content = store.download(f['id'])
                     # Payload exists only during this authorized run, never in a shared cache.
                     st.download_button('Download document', content, file_name=name, mime=mime,
                         key=f"download_{f['id']}", on_click='rerun')
-        st.caption('Files are read directly from the DARE-Arbo OneDrive folder. Uploads and downloads are limited to 25 MB per file.')
+        st.caption('Files are read directly from the private DARE-Arbo Supabase bucket. Uploads and downloads are limited to 25 MB per file.')
     except (PermissionError, ValueError) as exc:
         st.error(str(exc))
     except Exception:
         # Do not render exceptions containing credentials or Drive response data.
-        logging.getLogger(__name__).warning('Project OneDrive operation failed; check provider configuration and access.')
-        st.error('Microsoft OneDrive could not complete this request. Please retry or ask the administrator to check the private OneDrive connection, folder permissions and storage quota.')
+        logging.getLogger(__name__).warning('Project Supabase Storage operation failed; check private storage configuration and access.')
+        st.error('Private Supabase Storage could not complete this request. Please retry or ask the administrator to check the bucket configuration, access and storage quota.')
 
 
 st.markdown('''<style>
@@ -265,18 +262,14 @@ with st.sidebar:
                         st.error(str(exc))
     with st.expander('How sign-in works'):
         st.write('1. Enter the email address approved by the project administrator.\n2. Enter the one-time code sent to that address.\n3. Approved collaborators can access the project workspace; visitors can still read public study information.')
-        st.caption('Access is invite-only. The account must be approved in the app and registered with the authentication service. Private files still require the app administrator to maintain the OneDrive connection.')
+        st.caption('Access is invite-only. The account must be approved in the app and registered with the authentication service. Private files are held in Supabase Storage and remain behind collaborator access checks.')
 
 if page == 'Overview':
     st.markdown('''<div class="hero"><div class="eyebrow">Arbovirus surveillance · Methodological development</div>
     <h1>DARE-Arbo</h1><p>An endpoint-specific appraisal framework for strengthening the interpretation and synthesis of arbovirus surveillance evidence.</p></div>''', unsafe_allow_html=True)
     st.header('About DARE-Arbo')
     st.write((ROOT / 'Overview.txt').read_text(encoding='utf-8-sig').strip())
-    workspace_action, teams_action = st.columns(2)
-    with workspace_action:
-        st.link_button('Open the digital workspace ↗', WORKSPACE_URL, type='primary', width='stretch')
-    with teams_action:
-        st.link_button('Join the DARE-Arbo Teams community ↗', TEAMS_URL, width='stretch')
+    st.link_button('Open the digital workspace ↗', WORKSPACE_URL, type='primary', width='stretch')
     for column, value, label in zip(st.columns(4), ['3', '12', '47', '36'], ['Appraisal domains', 'Scored components', 'Planned pilot article-outcomes', 'Pilot publications']):
         column.metric(label, value)
     st.header('Make each estimate interpretable')
@@ -364,8 +357,7 @@ elif page == 'Collaborate':
     opening, closing = date(2026, 9, 22), date(2026, 10, 31)
     today = date.today()
     st.info('Expression-of-interest window: 22 September–31 October 2026. ' + ('The scheduled window is open.' if opening <= today <= closing else 'The scheduled window has closed.' if today > closing else 'The scheduled window has not yet opened.'))
-    st.link_button('Open the DARE-Arbo Teams community ↗', TEAMS_URL, type='primary')
-    st.caption('Project files and collaborator operations are managed in the Microsoft 365 workspace.')
+    st.caption('Private project files and collaborator operations are managed in the DARE-Arbo workspace.')
     c1, c2 = st.columns(2)
     with c1:
         st.subheader('Who can contribute?')
@@ -381,7 +373,7 @@ elif page == 'Project management':
 
 elif page == 'Feedback':
     from feedback import show_feedback
-    show_feedback(settings, create_service, identity, allowed)
+    show_feedback(settings, SupabaseWorkspaceService, identity, allowed)
 else:
     documents()
 

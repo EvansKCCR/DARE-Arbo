@@ -1,4 +1,4 @@
-"""Live study dashboard backed by the project OneDrive workbook."""
+"""Live study dashboard backed by the private Supabase workbook."""
 from datetime import date, datetime, timezone
 from html import escape
 from io import BytesIO
@@ -8,9 +8,7 @@ from hashlib import sha256
 import streamlit as st
 from openpyxl import load_workbook
 from access import has_full_access
-from drive_store import create_service, SOURCE_ID
-
-SOURCE_URL = f'https://onedrive.live.com/?id={SOURCE_ID}&cid=5e3948114b4b5428'
+from workspace_storage import SupabaseWorkspaceService, SOURCE_ID, PROJECT_FOLDER, WORKBOOK_MIME
 
 
 def parse_date(value):
@@ -99,7 +97,7 @@ def snapshot_scope(settings, identity, allowed):
     from access import require_full_access
     require_full_access(identity(), allowed())
     cfg = settings()
-    source = str(sorted(cfg.get('microsoft', {}).items()))
+    source = str(sorted(cfg.get('supabase_storage', {}).items()))
     roles = str(cfg.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com']))
     return sha256((identity()['email'].strip().casefold() + str(sorted(allowed())) + source + roles).encode()).hexdigest()
 
@@ -114,15 +112,17 @@ def load_snapshot(settings, identity, allowed, refresh=False, allow_expired=Fals
     cached = st.session_state.get('pm_snapshot')
     if cached and not refresh and (allow_expired or time.monotonic() - cached['loaded'] < 60):
         return cached
-    config = settings().get('microsoft', {})
-    if not config.get('drive_id'):
-        raise ValueError('Microsoft OneDrive connection is not configured.')
+    config = settings().get('supabase_storage', {})
+    if not all(config.get(key) for key in ('url', 'secret_key', 'bucket')):
+        raise ValueError('Private Supabase Storage is not configured.')
     try:
-        service = create_service(config)
+        service = SupabaseWorkspaceService(config)
         item = service.get_item(SOURCE_ID)
         content = service.download(SOURCE_ID)
-        if item.get('deleted') or item.get('parentReference', {}).get('id') != config.get('workbook_folder_id'):
-            raise PermissionError('The configured workbook is outside the project folder.')
+        if item.get('path') != SOURCE_ID or item.get('parentReference', {}).get('id') != PROJECT_FOLDER:
+            raise PermissionError('The configured workbook is outside the private project folder.')
+        if item.get('file', {}).get('mimeType') != WORKBOOK_MIME:
+            raise ValueError('The project workbook must be an Excel .xlsx file.')
         if int(item.get('size', 0)) > 25 * 1024 * 1024:
             raise ValueError('The project workbook exceeds the 25 MB limit.')
         tasks, issues = parse_register(content)
@@ -148,7 +148,7 @@ def invalidate_snapshot():
 def sync_header(snapshot, settings, identity, allowed, key):
     left, middle, right = st.columns([3, 2, 1])
     left.caption('Workbook synchronized · ' + snapshot['synced'].strftime('%d %b %Y %H:%M:%S UTC'))
-    middle.link_button('Open source workbook', SOURCE_URL, width='stretch')
+    middle.caption('Source: private Supabase workbook')
     right.button('Refresh', key='pm_refresh_' + key, width='stretch', on_click=invalidate_snapshot)
     if snapshot['issues']:
         with st.expander(f"Workbook data checks · {len(snapshot['issues'])} items"):
@@ -165,7 +165,7 @@ def show_sheet_dashboard(settings, identity, allowed, view='Overview'):
         snapshot = load_snapshot(settings, identity, allowed)
     except Exception:
         logging.getLogger(__name__).warning('Study workbook could not be synchronized.')
-        st.error('The workbook could not be synchronized. Check collaborator access, the administrator OneDrive connection and Activity Register headers, then retry.')
+        st.error('The workbook could not be synchronized. Check collaborator access, Supabase Storage configuration and Activity Register headers, then retry.')
         st.button('Retry synchronization', key='pm_retry_' + view)
         return
     sync_header(snapshot, settings, identity, allowed, view)
@@ -177,4 +177,4 @@ def show_sheet_dashboard(settings, identity, allowed, view='Overview'):
             render(snapshot['tasks'], datetime.now(timezone.utc).date(), identity()['email'])
         else:
             render(snapshot['tasks'], datetime.now(timezone.utc).date())
-    st.caption('Automatic synchronization every 60 seconds while this workspace is open. Task drafts are not refreshed automatically.')
+    st.caption('Automatic synchronization from Supabase every 60 seconds while this workspace is open. Task drafts are not refreshed automatically.')

@@ -1,10 +1,9 @@
 """Poll workbook assignments. Read-only dry run by default; --send delivers queued mail."""
 import argparse
 import os
-import time
-from drive_store import GraphClient, refresh_access_token
 from workbook_tasks import WorkbookTasks
 from assignment_notifications import configured, process_notifications
+from workspace_storage import SupabaseWorkspaceService
 
 
 def run(send=False):
@@ -12,13 +11,16 @@ def run(send=False):
     approved={e.strip().casefold() for e in os.environ['TASK_ALLOWED_EMAILS'].split(',') if e.strip()}
     if owner not in approved:
         raise ValueError('The administrator must be an approved collaborator.')
-    microsoft={'client_id':os.environ['MS_CLIENT_ID'],'client_secret':os.environ.get('MS_CLIENT_SECRET',''),
-        'refresh_token':os.environ['MS_REFRESH_TOKEN'],'drive_id':os.environ.get('MS_DRIVE_ID','5e3948114b4b5428')}
-    email={'from_address':os.environ.get('MAIL_FROM',owner),'app_url':os.environ.get('TASK_APP_URL','')}
+    storage={'url':os.environ['SUPABASE_URL'],'secret_key':os.environ['SUPABASE_SECRET_KEY'],
+        'bucket':os.environ.get('SUPABASE_BUCKET','dare-arbo-private')}
+    email={'from_address':os.environ.get('MAIL_FROM',owner),'app_url':os.environ.get('TASK_APP_URL',''),
+        'smtp_host':os.environ.get('SMTP_HOST','smtp.gmail.com'),'smtp_port':os.environ.get('SMTP_PORT','587'),
+        'username':os.environ.get('SMTP_USERNAME',os.environ.get('MAIL_FROM',owner)),
+        'password':os.environ.get('SMTP_PASSWORD','')}
     if send and not configured(email):
         raise ValueError('Configure MAIL_FROM and TASK_APP_URL before enabling delivery.')
-    actor=lambda:dict(email=owner,is_logged_in=True,tid='9188040d-6c67-4c5b-b112-36a304b66dad',iss='https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0',exp=time.time()+300)
-    service=GraphClient(refresh_access_token(microsoft),microsoft)
+    actor=lambda:dict(email=owner,is_logged_in=True)
+    service=SupabaseWorkspaceService(storage)
     store=WorkbookTasks(service,actor,lambda:approved,lambda:[owner])
     if send:
         store.sync_assignments()

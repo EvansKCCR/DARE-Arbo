@@ -7,7 +7,7 @@ import time as clock
 from zoneinfo import ZoneInfo, available_timezones
 import streamlit as st
 from access import has_full_access
-from drive_store import create_service
+from workspace_storage import SupabaseWorkspaceService
 from sheet_dashboard import snapshot_scope, invalidate_snapshot
 from assignment_notifications import configured
 from meeting_store import MeetingStore, instant, local_instant, meeting_calendar, send_invitations
@@ -16,7 +16,7 @@ DEFAULT_ADMINS=['evansasamoahadu@gmail.com']
 
 
 def store_for(settings,identity,allowed):
-    return MeetingStore(create_service(settings()['microsoft']),identity,allowed,
+    return MeetingStore(SupabaseWorkspaceService(settings().get('supabase_storage', {})),identity,allowed,
                         lambda:settings().get('project_management',{}).get('admin_emails',DEFAULT_ADMINS))
 
 
@@ -119,7 +119,7 @@ def meeting_admin(settings,identity,allowed):
     current=st.session_state.get('pm_meeting_editor_snapshot')
     if not current or current['scope']!=scope:
         try:current=load_meetings(settings,identity,allowed)
-        except Exception:st.error('Check collaborator access and the administrator OneDrive connection before scheduling meetings.');return
+        except Exception:st.error('Check collaborator access and the private Supabase workbook before scheduling meetings.');return
         st.session_state['pm_meeting_editor_snapshot']=current
     if st.session_state.get('pm_meeting_flash'):st.success(st.session_state.pop('pm_meeting_flash'))
     if st.button('Reload meeting editor (discards unsaved changes)',key='pm_meeting_reload'):
@@ -145,7 +145,7 @@ def meeting_admin(settings,identity,allowed):
             left,right=st.columns(2)
             start_day=left.date_input('Start date',value=start.date());start_clock=left.time_input('Start time',value=start.time(),step=60)
             end_day=right.date_input('End date',value=end.date());end_clock=right.time_input('End time',value=end.time(),step=60)
-            link=st.text_input('Meeting link',value=meeting['link'] if meeting else '',placeholder='https://teams.microsoft.com/l/meetup-join/…',max_chars=2000,help='Paste a link from Teams, Zoom or your chosen meeting service.')
+            link=st.text_input('Meeting link',value=meeting['link'] if meeting else '',placeholder='Paste the meeting link',max_chars=2000,help='Paste a link from your chosen meeting service.')
             agenda=st.text_area('Agenda / meeting notes',value=meeting['agenda'] if meeting else '',max_chars=5000)
             collaborators=st.multiselect('Invite approved collaborators',approved,default=sorted(existing&set(approved)))
             partners=st.text_area('Additional partner email addresses',value=', '.join(sorted(existing-set(approved))),help='Separate addresses with commas, semicolons or new lines. Up to 50 invitees in total.')
