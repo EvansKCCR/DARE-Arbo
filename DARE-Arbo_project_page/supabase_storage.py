@@ -46,7 +46,7 @@ class SupabaseStorage:
             raise SupabaseStorageError("Supabase Storage could not be reached.") from None
         if response.status_code not in allowed:
             explanations = {
-                400: "Supabase rejected the bucket or file request. Check the bucket name and file path.",
+                400: "Supabase rejected the bucket or file request.",
                 401: "Supabase rejected the server key. Confirm the current Secret key is saved under [supabase_storage].",
                 403: "Supabase denied the storage operation. Confirm the server Secret key and bucket permissions.",
                 404: "The Supabase bucket or object was not found. Confirm the bucket name and project URL.",
@@ -54,7 +54,20 @@ class SupabaseStorage:
                 413: "Supabase rejected the upload because it exceeds the bucket or project size limit.",
             }
             detail = explanations.get(response.status_code, "Check the Supabase Storage settings and retry.")
-            raise SupabaseStorageError(f"{detail} (HTTP {response.status_code})")
+            server_detail = ""
+            try:
+                body = response.json()
+                code = str(body.get("code") or body.get("error") or "").strip()
+                message = str(body.get("message") or "").strip()
+                # Never include response headers, request URLs, or credentials.
+                if self.key:
+                    message = message.replace(self.key, "[redacted]")
+                parts = [part for part in (code, message[:240]) if part]
+                if parts:
+                    server_detail = " Supabase detail: " + " — ".join(parts)
+            except (ValueError, AttributeError):
+                pass
+            raise SupabaseStorageError(f"{detail}{server_detail} (HTTP {response.status_code})")
         return response
 
     def ensure_private_bucket(self):
