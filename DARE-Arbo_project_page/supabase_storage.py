@@ -31,7 +31,11 @@ class SupabaseStorage:
         self.base_url = str(config["url"]).rstrip("/")
         self.key = str(config["secret_key"])
         self.bucket = str(config["bucket"])
-        self.headers = {"apikey": self.key, "Authorization": "Bearer " + self.key}
+        # New sb_secret_* keys are API keys, not JWTs. Keep compatibility with
+        # legacy service_role JWTs while sending new keys only as `apikey`.
+        self.headers = {"apikey": self.key}
+        if self.key.startswith("eyJ"):
+            self.headers["Authorization"] = "Bearer " + self.key
 
     def _request(self, method, path, *, content=None, json_data=None, headers=None, allowed=(200, 201, 204)):
         try:
@@ -41,7 +45,16 @@ class SupabaseStorage:
         except httpx.HTTPError:
             raise SupabaseStorageError("Supabase Storage could not be reached.") from None
         if response.status_code not in allowed:
-            raise SupabaseStorageError(f"Supabase Storage request failed ({response.status_code}).")
+            explanations = {
+                400: "Supabase rejected the bucket or file request. Check the bucket name and file path.",
+                401: "Supabase rejected the server key. Confirm the current Secret key is saved under [supabase_storage].",
+                403: "Supabase denied the storage operation. Confirm the server Secret key and bucket permissions.",
+                404: "The Supabase bucket or object was not found. Confirm the bucket name and project URL.",
+                409: "A file with this path already exists. Enable replacement or remove the duplicate from the upload.",
+                413: "Supabase rejected the upload because it exceeds the bucket or project size limit.",
+            }
+            detail = explanations.get(response.status_code, "Check the Supabase Storage settings and retry.")
+            raise SupabaseStorageError(f"{detail} (HTTP {response.status_code})")
         return response
 
     def ensure_private_bucket(self):
@@ -49,7 +62,7 @@ class SupabaseStorage:
         try:
             response = self._request("GET", path, allowed=(200,))
         except SupabaseStorageError as exc:
-            if "(404)" not in str(exc):
+            if "HTTP 404" not in str(exc):
                 raise
             created = self._request("POST", "/storage/v1/bucket", json_data={
                 "id": self.bucket, "name": self.bucket, "public": False,
@@ -76,6 +89,9 @@ class SupabaseStorage:
     def upload(self, path, content, mime_type="application/octet-stream", upsert=True):
         if len(content) > MAX_UPLOAD_BYTES:
             raise ValueError("Files must be no larger than 50 MB.")
+        if mime_type == "application/octet-stream":
+            import mimetypes
+            mime_type = mimetypes.guess_type(path)[0] or mime_type
         response = self._request("POST", self._object_path(path), content=content,
             headers={"Content-Type": mime_type, "x-upsert": "true" if upsert else "false"},
             allowed=(200, 201))

@@ -5,7 +5,7 @@ import logging
 import streamlit as st
 from access import has_full_access
 from drive_store import create_service, FOLDER_ID
-from supabase_storage import SupabaseStorage, configured as supabase_storage_configured
+from supabase_storage import SupabaseStorage, SupabaseStorageError, configured as supabase_storage_configured
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
@@ -110,6 +110,9 @@ def show_storage_migration(settings):
             with st.spinner('Uploading files to private Supabase Storage and verifying checksums…'):
                 manifest = SupabaseStorage(supabase).upload_local_files(
                     uploads, replace_existing=replace_existing, progress=update_progress)
+        except (SupabaseStorageError, ValueError) as error:
+            logging.getLogger(__name__).warning('Local project file upload to Supabase was rejected: %s', error)
+            st.error(f'Upload stopped: {error}')
         except Exception:
             logging.getLogger(__name__).exception('Local project file upload to Supabase failed.')
             st.error('The upload did not finish. Review the app configuration and retry; existing source files on your computer are unchanged.')
