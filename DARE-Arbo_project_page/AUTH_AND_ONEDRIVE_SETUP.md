@@ -10,10 +10,16 @@ The app's user-facing sign-in uses Supabase email one-time codes. It does not us
 4. Configure a production SMTP sender in Supabase Auth so OTP messages can be delivered to collaborators. The built-in mail service is intended for testing and restricts delivery to project team addresses. Set the email OTP template to include Supabase's `{{ .Token }}` code.
 5. Copy the correct Supabase URL and publishable key to Streamlit Community Cloud → Manage app → Settings → Secrets, save, and reboot.
 
-## Private OneDrive backend
+## One-time copy to Supabase Storage
 
-The project workbook and documents remain in OneDrive. Since anonymous sharing has been removed, the app uses one administrator-owned Microsoft Graph delegated grant on the server. Collaborators do not sign in to Microsoft. The service account must have named access to the DARE-Arbo folder and consent to delegated `Files.ReadWrite`, `User.Read`, and `Mail.Send` permissions. Its client ID, client secret, and refresh token belong only in Streamlit Secrets under `[microsoft]`; never place them in GitHub or chat.
+The Project Management page has an administrator-only **Storage migration** tab. Add `[supabase_storage]` to Streamlit Secrets with the project URL, a server-side Supabase Secret key, and the bucket name `dare-arbo-private`. An administrator can then copy the complete OneDrive DARE-Arbo folder into a private bucket. The migration copies rather than deletes; each file is verified by SHA-256 and a manifest is written only after the full copy succeeds. Keep the Microsoft owner connection active until the manifest has been reviewed and the Supabase copy is confirmed.
 
-This is still a Microsoft storage integration, even though collaborator sign-in is independent of Microsoft. If the Microsoft owner grant is revoked or expires, an administrator must reconnect it. Each collaborator is authorized by the Supabase email identity and app allowlist; all server-side file and workbook operations remain restricted to the configured DARE-Arbo item IDs.
+After verification, deploy the Supabase Storage backend and remove the Microsoft connection from Streamlit Secrets. Do not revoke the owner grant or remove the OneDrive source until that final cutover succeeds.
+
+## Current OneDrive source during migration
+
+Until the verified copy and cutover are complete, the app continues to use the administrator-owned Microsoft Graph grant for source files and workbook edits. Collaborators do not sign in to Microsoft. Keep the owner grant credentials only in Streamlit Secrets under `[microsoft]`; never place them in GitHub or chat.
+
+During this migration phase, the Microsoft owner grant remains active only so the app can copy the files and workbook. Each collaborator is authorized by the Supabase email identity and app allowlist.
 
 The Supabase project URL, publishable key, Microsoft owner grant, approved-email list, admin list, and notification sender are shown as placeholders in `.streamlit/secrets.toml.example`.

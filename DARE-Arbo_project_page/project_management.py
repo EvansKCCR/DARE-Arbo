@@ -3,7 +3,8 @@ from datetime import date, datetime, timezone
 import logging
 import streamlit as st
 from access import has_full_access
-from drive_store import create_service
+from drive_store import create_service, FOLDER_ID
+from supabase_storage import SupabaseStorage, configured as supabase_storage_configured
 from workbook_tasks import WorkbookTasks, STATUSES, emails
 from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
@@ -60,9 +61,12 @@ def show_project_management(settings, identity, allowed):
         st.write('Study coordination, milestones, deliverables and implementation progress')
         st.caption('Administrator workspace' if admin else 'Research collaborator workspace')
         st.link_button('Open DARE-Arbo Teams community ↗', 'https://teams.live.com/l/community/FEAGbejdp6gqGNM_A')
-        st.caption('Tasks, meetings, team profiles and project documents are stored in the shared OneDrive workbook and folder. Collaborators sign in with an approved email code; the app administrator maintains the private OneDrive connection.')
+        st.caption('Collaborators sign in with an approved email code. Project documents and management data are being migrated to private Supabase storage.')
         # Native tabs switch without rerunning or unmounting an open editing form.
-        tabs = st.tabs(['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings'])
+        tab_names = ['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings']
+        if admin:
+            tab_names.append('Storage migration')
+        tabs = st.tabs(tab_names)
         for tab, view in zip(tabs[:3], ['Overview', 'Activity Register', 'Study Timeline']):
             with tab:
                 show_sheet_dashboard(settings, identity, allowed, view)
@@ -70,6 +74,43 @@ def show_project_management(settings, identity, allowed):
             show_assignments(settings, identity, allowed)
         with tabs[4]:
             show_meetings(settings, identity, allowed)
+        if admin:
+            with tabs[5]:
+                show_storage_migration(settings)
+
+
+def show_storage_migration(settings):
+    st.subheader('Copy project files to private Supabase Storage')
+    st.write('This one-time copy includes the complete DARE-Arbo OneDrive folder, including the project workbooks, private documents, feedback records and archive files. Source files stay in OneDrive until the copy has been checked.')
+    config = settings()
+    microsoft = config.get('microsoft', {})
+    supabase = config.get('supabase_storage', {})
+    source_ready = bool(microsoft.get('client_id') and microsoft.get('refresh_token') and microsoft.get('folder_id'))
+    destination_ready = supabase_storage_configured(supabase)
+    if not source_ready:
+        st.warning('The existing OneDrive owner connection is not configured.')
+    if not destination_ready:
+        st.info('Add the Supabase project URL, server-side Secret key and bucket name to Streamlit Secrets under [supabase_storage]. Keep the Secret key out of GitHub and chat.')
+    if destination_ready:
+        bucket = str(supabase.get('bucket'))
+        st.caption(f'Destination bucket: {bucket} · files will remain private.')
+    progress_bar = st.progress(0.0, text='Ready to copy')
+    status = st.empty()
+    def update_progress(count, name):
+        progress_bar.progress(min(count / 100, 0.95), text=f'Copied and verified {count} file(s) · {name}')
+        status.caption('Each file is checked against its SHA-256 checksum before the migration is marked complete.')
+    if st.button('Copy and verify OneDrive files', type='primary', disabled=not (source_ready and destination_ready), key='pm_copy_to_supabase'):
+        try:
+            with st.spinner('Copying the project folder and verifying each file…'):
+                manifest = SupabaseStorage(supabase).copy_onedrive_tree(
+                    create_service(microsoft), FOLDER_ID, progress=update_progress)
+        except Exception:
+            logging.getLogger(__name__).exception('OneDrive to Supabase migration failed.')
+            st.error('The copy did not finish. OneDrive files remain unchanged; review the app logs and retry after correcting the connection or bucket settings.')
+        else:
+            progress_bar.progress(1.0, text=f"Copied and checksum-verified {manifest['file_count']} files")
+            st.success('Copy complete. The source OneDrive files are still intact. Save this report before removing the Microsoft connection.')
+            st.dataframe([{'File': item['path'], 'Bytes': item['size'], 'SHA-256': item['sha256']} for item in manifest['files']], hide_index=True, width='stretch')
 
 
 @st.fragment
