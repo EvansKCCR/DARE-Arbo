@@ -1,13 +1,15 @@
 """Research operations workspace backed by the private Supabase workbook."""
 from datetime import date, datetime, timezone
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, parseaddr
 from html import escape
 import json
 import logging
 import mimetypes
 from pathlib import Path
 import re
+import smtplib
+import ssl
 import streamlit as st
 from access import has_full_access
 from workspace_storage import SupabaseWorkspaceService
@@ -182,9 +184,12 @@ def show_direct_email(settings, identity, allowed):
         return
 
     message = EmailMessage()
-    sender_address = email_config['from_address']
+    sender_address = parseaddr(str(email_config['from_address']))[1].strip()
+    if not sender_address:
+        st.error('The configured email.from_address is not a valid email address.')
+        return
     message['From'] = formataddr(('DARE-Arbo Development Team', sender_address))
-    message['To'] = email_config['from_address']
+    message['To'] = sender_address
     message['Bcc'] = ', '.join(recipients)
     message['Subject'] = subject.strip()
     message.set_content(
@@ -228,9 +233,27 @@ def show_direct_email(settings, identity, allowed):
     try:
         with st.spinner(f'Sending email to {len(recipients)} recipient(s)…'):
             SMTPMailer(email_config).send_message(message)
-    except Exception:
-        logging.getLogger(__name__).warning('Project email delivery could not be confirmed.')
-        st.error('The message was not confirmed as sent. Check the SMTP sender settings before retrying.')
+    except smtplib.SMTPAuthenticationError as error:
+        logging.getLogger(__name__).exception('Project email SMTP authentication failed.')
+        st.error(f'SMTP login was rejected (code {error.smtp_code}). Check email.username, email.password, and whether SMTP access is enabled for the sender mailbox.')
+    except smtplib.SMTPRecipientsRefused as error:
+        logging.getLogger(__name__).exception('Project email recipients were refused by SMTP.')
+        st.error(f'The SMTP server refused {len(error.recipients)} recipient(s). Check the addresses or the sender’s relay permissions.')
+    except PermissionError as error:
+        logging.getLogger(__name__).exception('Project email sender validation failed.')
+        st.error(f'Email sender validation failed: {type(error).__name__}. The From address must match email.from_address in Streamlit Secrets.')
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError, ssl.SSLError):
+        logging.getLogger(__name__).exception('Project email could not connect securely to SMTP.')
+        st.error('The app could not establish a secure SMTP connection. Check email.smtp_host and email.smtp_port (usually port 587 with STARTTLS), and confirm the mail server accepts connections from Streamlit Cloud.')
+    except smtplib.SMTPResponseException as error:
+        logging.getLogger(__name__).exception('Project email was rejected by the SMTP server.')
+        st.error(f'The SMTP server rejected the message (code {error.smtp_code}). Check the SMTP sender policy or message size, then retry.')
+    except (KeyError, TypeError, ValueError) as error:
+        logging.getLogger(__name__).exception('Project email configuration or sender validation failed.')
+        st.error(f'Email configuration or sender validation failed: {type(error).__name__}. Check [email].from_address, username, host, port, app_url, and password in Streamlit Secrets.')
+    except Exception as error:
+        logging.getLogger(__name__).exception('Project email delivery could not be confirmed.')
+        st.error(f'Email delivery could not be confirmed ({type(error).__name__}). Check the Streamlit app logs for the SMTP response before retrying to avoid sending duplicates.')
     else:
         st.success(f'Email accepted by the SMTP server for {len(recipients)} recipient(s).')
 
