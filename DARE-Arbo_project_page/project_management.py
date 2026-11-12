@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from html import escape
+from io import BytesIO
 import json
 import logging
 import mimetypes
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import smtplib
 import ssl
+from PIL import Image, ImageChops
 import streamlit as st
 from access import has_full_access
 from workspace_storage import SupabaseWorkspaceService
@@ -195,9 +197,10 @@ def show_direct_email(settings, identity, allowed):
     message.set_content(
         f"{body.strip()}\n\n—\nDARE-Arbo Development Team\n"
         "A collaborative project between SYNERGY-NGS-2025 and the Global Health and Infectious Disease Research Group (GHID).\n\n"
-        "DARE-Arbo: https://evanskccr.github.io/DARE-Arbo/\n"
         "GHID: https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/\n"
-        "SYNERGY-NGS 2025: https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true"
+        "SYNERGY-NGS-2025: https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true\n\n"
+        "DARE-Arbo project page: https://evanskccr.github.io/DARE-Arbo/\n\n"
+        "Great discoveries and meaningful changes rarely happen in isolation."
     )
     project_page = 'https://evanskccr.github.io/DARE-Arbo/'
     ghid_url = 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/'
@@ -205,19 +208,21 @@ def show_direct_email(settings, identity, allowed):
     html_body = f'''<!doctype html>
 <html><body style="margin:0;padding:20px;color:#24364B;font-family:Arial,sans-serif;font-size:15px;line-height:1.55">
   <div>{escape(body.strip()).replace(chr(10), '<br>')}</div>
-  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #D9E0E7;width:100%;max-width:620px">
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #D9E0E7;width:100%;max-width:560px">
     <tr><td colspan="2" style="padding:16px 0 10px;font-weight:700;color:#24364B">DARE-Arbo Development Team</td></tr>
     <tr><td colspan="2" style="padding:0 0 14px;color:#526277">A collaborative project between SYNERGY-NGS-2025 and the Global Health and Infectious Disease Research Group (GHID).</td></tr>
     <tr>
-      <td width="140" height="140" style="width:140px;height:140px;padding:0 18px 14px 0;vertical-align:middle;text-align:center">
-        <a href="{ghid_url}" style="text-decoration:none"><img src="cid:ghid-logo" alt="GHID — Global Health and Infectious Disease Research Group" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:auto"></a>
+      <td width="50%" style="width:50%;padding:8px 12px 4px 0;vertical-align:top;text-align:center">
+        <a href="{ghid_url}" style="text-decoration:none"><img src="cid:ghid-logo" alt="GHID — Global Health and Infectious Disease Research Group" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:0 auto 8px"></a>
+        <a href="{ghid_url}" style="color:#176B73">GHID</a>
       </td>
-      <td width="140" height="140" style="width:140px;height:140px;padding:0 0 14px;vertical-align:middle;text-align:center">
-        <a href="{synergy_url}" style="text-decoration:none"><img src="cid:synergy-logo" alt="SYNERGY-NGS-2025" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:auto"></a>
+      <td width="50%" style="width:50%;padding:8px 0 4px 12px;vertical-align:top;text-align:center">
+        <a href="{synergy_url}" style="text-decoration:none"><img src="cid:synergy-logo" alt="SYNERGY-NGS-2025" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:0 auto 8px"></a>
+        <a href="{synergy_url}" style="color:#176B73">SYNERGY-NGS-2025 on LinkedIn</a>
       </td>
     </tr>
-    <tr><td colspan="2" style="padding:0 0 6px"><a href="{project_page}" style="color:#176B73;font-weight:600">DARE-Arbo project page</a></td></tr>
-    <tr><td style="padding:0 18px 4px 0"><a href="{ghid_url}" style="color:#176B73">GHID</a></td><td style="padding:0 0 4px"><a href="{synergy_url}" style="color:#176B73">SYNERGY-NGS 2025 on LinkedIn</a></td></tr>
+    <tr><td colspan="2" style="padding:14px 0 6px;text-align:center"><a href="{project_page}" style="color:#176B73;font-weight:600">DARE-Arbo project page</a></td></tr>
+    <tr><td colspan="2" style="padding:10px 0 2px;text-align:center;color:#24364B;font-weight:700">Great discoveries and meaningful changes rarely happen in isolation.</td></tr>
   </table>
 </body></html>'''
     message.add_alternative(html_body, subtype='html')
@@ -226,9 +231,32 @@ def show_direct_email(settings, identity, allowed):
         logo_path = Path(__file__).resolve().parent / filename
         if not logo_path.is_file():
             continue
+        logo_bytes = logo_path.read_bytes()
+        if content_id == 'ghid-logo':
+            with Image.open(BytesIO(logo_bytes)) as source:
+                logo = source.convert('RGB')
+                white = Image.new('RGB', logo.size, 'white')
+                foreground = ImageChops.difference(logo, white).convert('L').point(lambda value: 255 if value > 25 else 0)
+                bounds = foreground.getbbox()
+                if bounds:
+                    left, top, right, bottom = bounds
+                    padding = max(4, int(max(right - left, bottom - top) * 0.06))
+                    bounds = (max(0, left - padding), max(0, top - padding),
+                              min(logo.width, right + padding), min(logo.height, bottom + padding))
+                    logo = logo.crop(bounds)
+                logo = logo.resize((240, 240), Image.Resampling.LANCZOS)
+                output = BytesIO()
+                logo.save(output, format='JPEG', quality=92, optimize=True)
+                logo_bytes = output.getvalue()
+        elif content_id == 'synergy-logo':
+            with Image.open(BytesIO(logo_bytes)) as source:
+                logo = source.convert('RGB').resize((240, 240), Image.Resampling.LANCZOS)
+                output = BytesIO()
+                logo.save(output, format='PNG', optimize=True)
+                logo_bytes = output.getvalue()
         mime_type, _ = mimetypes.guess_type(logo_path.name)
         maintype, subtype = (mime_type or 'image/png').split('/', 1)
-        html_part.add_related(logo_path.read_bytes(), maintype=maintype, subtype=subtype,
+        html_part.add_related(logo_bytes, maintype=maintype, subtype=subtype,
                               cid=content_id, filename=logo_path.name, disposition='inline')
     try:
         with st.spinner(f'Sending email to {len(recipients)} recipient(s)…'):
