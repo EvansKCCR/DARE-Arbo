@@ -1,8 +1,12 @@
 """Research operations workspace backed by the private Supabase workbook."""
 from datetime import date, datetime, timezone
 from email.message import EmailMessage
+from email.utils import formataddr
+from html import escape
 import json
 import logging
+import mimetypes
+from pathlib import Path
 import re
 import streamlit as st
 from access import has_full_access
@@ -178,11 +182,49 @@ def show_direct_email(settings, identity, allowed):
         return
 
     message = EmailMessage()
-    message['From'] = email_config['from_address']
+    sender_address = email_config['from_address']
+    message['From'] = formataddr(('DARE-Arbo Development Team', sender_address))
     message['To'] = email_config['from_address']
     message['Bcc'] = ', '.join(recipients)
     message['Subject'] = subject.strip()
-    message.set_content(body.strip())
+    message.set_content(
+        f"{body.strip()}\n\n—\nDARE-Arbo Development Team\n"
+        "A collaborative project between Synergy NGS and GHID.\n\n"
+        "DARE-Arbo: https://evanskccr.github.io/DARE-Arbo/\n"
+        "GHID: https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/\n"
+        "SYNERGY-NGS 2025: https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true"
+    )
+    project_page = 'https://evanskccr.github.io/DARE-Arbo/'
+    ghid_url = 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/'
+    synergy_url = 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true'
+    html_body = f'''<!doctype html>
+<html><body style="margin:0;padding:20px;color:#24364B;font-family:Arial,sans-serif;font-size:15px;line-height:1.55">
+  <div>{escape(body.strip()).replace(chr(10), '<br>')}</div>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #D9E0E7;width:100%;max-width:620px">
+    <tr><td colspan="2" style="padding:16px 0 10px;font-weight:700;color:#24364B">DARE-Arbo Development Team</td></tr>
+    <tr><td colspan="2" style="padding:0 0 14px;color:#526277">A collaborative project between Synergy NGS and GHID.</td></tr>
+    <tr>
+      <td style="padding:0 18px 14px 0;vertical-align:middle">
+        <a href="{ghid_url}" style="text-decoration:none"><img src="cid:ghid-logo" alt="GHID — Global Health and Infectious Diseases Research Group" width="88" style="display:block;width:88px;max-height:96px;object-fit:contain;border:0"></a>
+      </td>
+      <td style="padding:0 0 14px;vertical-align:middle">
+        <a href="{synergy_url}" style="text-decoration:none"><img src="cid:synergy-logo" alt="SYNERGY-NGS 2025" width="104" style="display:block;width:104px;max-height:104px;object-fit:contain;border:0"></a>
+      </td>
+    </tr>
+    <tr><td colspan="2" style="padding:0 0 6px"><a href="{project_page}" style="color:#176B73;font-weight:600">DARE-Arbo project page</a></td></tr>
+    <tr><td style="padding:0 18px 4px 0"><a href="{ghid_url}" style="color:#176B73">GHID</a></td><td style="padding:0 0 4px"><a href="{synergy_url}" style="color:#176B73">SYNERGY-NGS 2025 on LinkedIn</a></td></tr>
+  </table>
+</body></html>'''
+    message.add_alternative(html_body, subtype='html')
+    html_part = message.get_payload()[-1]
+    for filename, content_id in (('Logo.jpeg', 'ghid-logo'), ('Synergy_NGS2025.png', 'synergy-logo')):
+        logo_path = Path(__file__).resolve().parent / filename
+        if not logo_path.is_file():
+            continue
+        mime_type, _ = mimetypes.guess_type(logo_path.name)
+        maintype, subtype = (mime_type or 'image/png').split('/', 1)
+        html_part.add_related(logo_path.read_bytes(), maintype=maintype, subtype=subtype,
+                              cid=content_id, filename=logo_path.name, disposition='inline')
     try:
         with st.spinner(f'Sending email to {len(recipients)} recipient(s)…'):
             SMTPMailer(email_config).send_message(message)
