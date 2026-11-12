@@ -194,7 +194,7 @@ def show_direct_email(settings, identity, allowed):
     message['Subject'] = subject.strip()
     message.set_content(
         f"{body.strip()}\n\n—\nDARE-Arbo Development Team\n"
-        "A collaborative project between Synergy NGS and GHID.\n\n"
+        "A collaborative project between SYNERGY-NGS-2025 and the Global Health and Infectious Disease Research Group (GHID).\n\n"
         "DARE-Arbo: https://evanskccr.github.io/DARE-Arbo/\n"
         "GHID: https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/\n"
         "SYNERGY-NGS 2025: https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true"
@@ -207,13 +207,13 @@ def show_direct_email(settings, identity, allowed):
   <div>{escape(body.strip()).replace(chr(10), '<br>')}</div>
   <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #D9E0E7;width:100%;max-width:620px">
     <tr><td colspan="2" style="padding:16px 0 10px;font-weight:700;color:#24364B">DARE-Arbo Development Team</td></tr>
-    <tr><td colspan="2" style="padding:0 0 14px;color:#526277">A collaborative project between Synergy NGS and GHID.</td></tr>
+    <tr><td colspan="2" style="padding:0 0 14px;color:#526277">A collaborative project between SYNERGY-NGS-2025 and the Global Health and Infectious Disease Research Group (GHID).</td></tr>
     <tr>
-      <td style="padding:0 18px 14px 0;vertical-align:middle">
-        <a href="{ghid_url}" style="text-decoration:none"><img src="cid:ghid-logo" alt="GHID — Global Health and Infectious Diseases Research Group" width="88" style="display:block;width:88px;max-height:96px;object-fit:contain;border:0"></a>
+      <td width="140" height="140" style="width:140px;height:140px;padding:0 18px 14px 0;vertical-align:middle;text-align:center">
+        <a href="{ghid_url}" style="text-decoration:none"><img src="cid:ghid-logo" alt="GHID — Global Health and Infectious Disease Research Group" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:auto"></a>
       </td>
-      <td style="padding:0 0 14px;vertical-align:middle">
-        <a href="{synergy_url}" style="text-decoration:none"><img src="cid:synergy-logo" alt="SYNERGY-NGS 2025" width="104" style="display:block;width:104px;max-height:104px;object-fit:contain;border:0"></a>
+      <td width="140" height="140" style="width:140px;height:140px;padding:0 0 14px;vertical-align:middle;text-align:center">
+        <a href="{synergy_url}" style="text-decoration:none"><img src="cid:synergy-logo" alt="SYNERGY-NGS-2025" width="120" height="120" style="display:block;width:120px;height:120px;object-fit:contain;border:0;margin:auto"></a>
       </td>
     </tr>
     <tr><td colspan="2" style="padding:0 0 6px"><a href="{project_page}" style="color:#176B73;font-weight:600">DARE-Arbo project page</a></td></tr>
