@@ -1,7 +1,9 @@
 """Research operations workspace backed by the private Supabase workbook."""
 from datetime import date, datetime, timezone
+from email.message import EmailMessage
 import json
 import logging
+import re
 import streamlit as st
 from access import has_full_access
 from workspace_storage import SupabaseWorkspaceService
@@ -11,6 +13,7 @@ from sheet_dashboard import show_sheet_dashboard, load_snapshot
 from workspace_views import activity_key, detail, activity_table, format_date
 from assignment_notifications import configured, process_notifications, verify_sender, sender_secret_status
 from meeting_scheduler import show_meetings
+from smtp_mailer import SMTPMailer
 
 WORKSPACE_CSS = """<style>
 .st-key-pm_workspace [data-testid="stHeading"] :is(h1,h2,h3){color:#24364B}
@@ -65,7 +68,7 @@ def show_project_management(settings, identity, allowed):
         # Native tabs switch without rerunning or unmounting an open editing form.
         tab_names = ['Overview', 'Activity Register', 'Study Timeline', 'Task Management' if admin else 'My Tasks', 'Meetings']
         if admin:
-            tab_names.append('Storage migration')
+            tab_names.extend(['Email', 'Storage migration'])
         tabs = st.tabs(tab_names)
         for tab, view in zip(tabs[:3], ['Overview', 'Activity Register', 'Study Timeline']):
             with tab:
@@ -76,12 +79,13 @@ def show_project_management(settings, identity, allowed):
             show_meetings(settings, identity, allowed)
         if admin:
             with tabs[5]:
+                show_direct_email(settings, identity, allowed)
+            with tabs[6]:
                 show_storage_migration(settings)
 
 
 def show_storage_migration(settings):
     st.subheader('Upload local project files to private Supabase Storage')
-    st.write('Upload a ZIP archive of the project folder or select files from your computer. Files are placed in the private Supabase bucket and checked with SHA-256 after upload. Pilot_Articles.zip is distributed separately by email and must not be uploaded here.')
     config = settings()
     supabase = config.get('supabase_storage', {})
     destination_ready = supabase_storage_configured(supabase)
@@ -121,6 +125,72 @@ def show_storage_migration(settings):
             st.dataframe([{'File': item['path'], 'Bytes': item['size'], 'SHA-256': item['sha256']} for item in manifest['files']], hide_index=True, width='stretch')
             st.download_button('Download checksum manifest', json.dumps(manifest, indent=2),
                                file_name='dare_arbo_supabase_migration_manifest.json', mime='application/json')
+
+
+def show_direct_email(settings, identity, allowed):
+    """Administrator-only compose form using the configured project SMTP sender."""
+    config = settings()
+    admins = config.get('project_management', {}).get('admin_emails', ['evansasamoahadu@gmail.com'])
+    if identity()['email'].strip().casefold() not in {str(email).strip().casefold() for email in admins}:
+        st.info('Administrator access is required to send project email.')
+        return
+
+    email_config = config.get('email', {})
+    st.subheader('Write and send project email')
+    st.caption('Messages are sent from the configured project sender. Selected and additional recipients are BCC so their addresses remain private.')
+    if not configured(email_config):
+        st.warning('The project email sender is not configured. Set the existing [email] SMTP settings in Streamlit Secrets to enable sending.')
+
+    directory = sorted({str(address).strip().casefold() for address in allowed() if str(address).strip()})
+    with st.form('pm_direct_email_form', clear_on_submit=True):
+        selected = st.multiselect('Collaborator email directory', directory,
+                                  help='Choose approved collaborator addresses for this message.')
+        additional = st.text_area('Additional partner email addresses', max_chars=5000,
+                                  placeholder='partner@example.org, another@example.org',
+                                  help='Optional. Separate addresses with commas, semicolons, or new lines.')
+        subject = st.text_input('Subject', max_chars=250)
+        body = st.text_area('Message', max_chars=20000, height=220)
+        send = st.form_submit_button('Send email', type='primary', disabled=not configured(email_config))
+
+    if not send:
+        return
+
+    recipients = list(dict.fromkeys(
+        [str(address).strip().casefold() for address in selected]
+        + [address.strip().casefold() for address in re.split(r'[,;\n]+', additional) if address.strip()]
+    ))
+    if not recipients:
+        st.error('Choose at least one recipient from the directory or enter a partner email address.')
+        return
+    if len(recipients) > 25:
+        st.error('Send to no more than 25 recipients at a time.')
+        return
+    email_pattern = re.compile(r'^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$')
+    invalid = [address for address in recipients if not email_pattern.fullmatch(address)]
+    if invalid:
+        st.error('Check these email addresses: ' + ', '.join(invalid))
+        return
+    if not subject.strip() or any(char in subject for char in '\r\n'):
+        st.error('Enter a subject on one line.')
+        return
+    if not body.strip():
+        st.error('Enter a message before sending.')
+        return
+
+    message = EmailMessage()
+    message['From'] = email_config['from_address']
+    message['To'] = email_config['from_address']
+    message['Bcc'] = ', '.join(recipients)
+    message['Subject'] = subject.strip()
+    message.set_content(body.strip())
+    try:
+        with st.spinner(f'Sending email to {len(recipients)} recipient(s)…'):
+            SMTPMailer(email_config).send_message(message)
+    except Exception:
+        logging.getLogger(__name__).warning('Project email delivery could not be confirmed.')
+        st.error('The message was not confirmed as sent. Check the SMTP sender settings before retrying.')
+    else:
+        st.success(f'Email accepted by the SMTP server for {len(recipients)} recipient(s).')
 
 
 @st.fragment
