@@ -199,10 +199,10 @@ def show_direct_email(settings, identity, allowed):
         "A collaborative project between SYNERGY-NGS-2025 and the Global Health and Infectious Disease Research Group (GHID).\n\n"
         "GHID: https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/\n"
         "SYNERGY-NGS-2025: https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true\n\n"
-        "DARE-Arbo project page: https://evanskccr.github.io/DARE-Arbo/\n\n"
+        "DARE-Arbo project page: https://dare-arbo-pg.streamlit.app/\n\n"
         "Great discoveries and meaningful changes rarely happen in isolation."
     )
-    project_page = 'https://evanskccr.github.io/DARE-Arbo/'
+    project_page = 'https://dare-arbo-pg.streamlit.app/'
     ghid_url = 'https://kccr-ghana.org/research-impact/research-groups/global-health-infectious-diseases/'
     synergy_url = 'https://www.linkedin.com/company/synergy-ngs-2025/?viewAsMember=true'
     html_body = f'''<!doctype html>
