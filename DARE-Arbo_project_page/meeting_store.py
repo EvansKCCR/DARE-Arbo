@@ -8,10 +8,12 @@ from urllib.parse import urlsplit
 from uuid import uuid4, UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from openpyxl import load_workbook
+import logging
 from workbook_tasks import WorkbookTasks
 from assignment_notifications import table, append_literals, configured
-from smtp_mailer import SMTPMailer
+from smtp_mailer import SMTPMailer, delivery_error
 
 MEETINGS = 'Meetings'
 INVITATIONS = 'Meeting Invitations'
@@ -23,9 +25,10 @@ EDIT_FIELDS = {'title','agenda','start','end','timezone','link','attendees'}
 
 
 def email_address(value):
-    value=str(value).strip().casefold()
+    raw=str(value).strip()
+    value=(parseaddr(raw)[1].strip() or raw).casefold()
     if len(value)>254 or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}",value) or '..' in value:
-        raise ValueError('Enter valid email addresses separated by commas, semicolons or new lines.')
+        raise ValueError('Enter a valid email address (for example name@example.org). Separate multiple addresses with commas, semicolons or new lines.')
     return value
 
 
@@ -121,7 +124,9 @@ def meeting_calendar(meeting, recipient=None, method='PUBLISH', now=None):
 
 def invitation_message(meeting,recipient,method,config):
     message=EmailMessage()
-    message['From']=config['from_address'];message['To']=email_address(recipient)
+    sender=parseaddr(str(config['from_address']))[1].strip()
+    if not sender:raise ValueError('The configured email.from_address is not a valid email address.')
+    message['From']=formataddr(('DARE-Arbo Development Team',sender));message['To']=email_address(recipient)
     prefix='Meeting cancelled' if method=='CANCEL' else 'Meeting invitation / update'
     message['Subject']='DARE-Arbo: '+prefix+' — '+meeting['title']
     tz=ZoneInfo(meeting['timezone'])
@@ -226,21 +231,26 @@ def send_invitations(store,config,meeting_id,event_ids=None):
     if not configured(config):raise ValueError('Configure the SMTP sender address, app URL and password before sending invitations.')
     snapshot=store.snapshot()
     meeting=next((m for m in snapshot['meetings'] if m['id']==meeting_id),None)
-    if not meeting or email_address(config['from_address'])!=meeting['organizer']:
+    sender=parseaddr(str(config.get('from_address','')))[1].strip().casefold()
+    if not sender:
+        raise ValueError('The configured email.from_address is not a valid email address.')
+    if not meeting or email_address(sender)!=meeting['organizer']:
         raise ValueError('Use the meeting’s original organizer email to send its invitations.')
     events=[e for e in snapshot['invitations'] if e['meeting_id']==meeting_id and e['state']=='queued' and (event_ids is None or e['event_id'] in event_ids)]
-    result=dict(sent=0,skipped=0,uncertain=0)
+    result=dict(sent=0,skipped=0,uncertain=0,error=None)
     if not events:return result
     # Sender mismatch or SMTP login failures leave invitations queued.
     mailer=SMTPMailer(config)
-    mailer.verify_mail_sender(config['from_address'])
+    mailer.verify_mail_sender(sender)
     for event in events:
-        claimed=store.claim_invitation(event['event_id'],config['from_address'])
+        claimed=store.claim_invitation(event['event_id'],sender)
         if not claimed:result['skipped']+=1;continue
         try:
             message=invitation_message(claimed['meeting'],claimed['recipient'],claimed['method'],config)
             store.require_admin();mailer.send_message(message)
-        except Exception:state='failed_or_uncertain';result['uncertain']+=1
+        except Exception as error:
+            logging.getLogger(__name__).exception('Meeting invitation delivery failed or is uncertain.')
+            state='failed_or_uncertain';result['uncertain']+=1;result['error']=delivery_error(error)
         else:state='sent';result['sent']+=1
         try:store.finish_invitation(event['event_id'],state)
         except Exception:result['uncertain']+=1

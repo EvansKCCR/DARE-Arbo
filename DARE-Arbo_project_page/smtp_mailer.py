@@ -8,6 +8,23 @@ def configured(config):
     return bool(config.get("from_address") and config.get("app_url") and config.get("password"))
 
 
+def delivery_error(error):
+    """Return actionable SMTP guidance without exposing credentials or raw server text."""
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return f"SMTP login was rejected (code {error.smtp_code}). Check the sender username/password and SMTP access for the mailbox."
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return f"The SMTP server refused {len(error.recipients)} recipient(s). Check the addresses or sender relay permissions."
+    if isinstance(error, PermissionError):
+        return "The configured From address does not match the meeting's original organizer address."
+    if isinstance(error, ValueError):
+        return str(error)
+    if isinstance(error, (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError, ssl.SSLError)):
+        return "A secure SMTP connection could not be established. Check the SMTP host and port, and whether Streamlit Cloud can connect to the mail server."
+    if isinstance(error, smtplib.SMTPResponseException):
+        return f"The SMTP server rejected the message (code {error.smtp_code}). Check sender policy or message size."
+    return f"Email delivery could not be confirmed ({type(error).__name__}). Check the app logs before retrying to avoid duplicates."
+
+
 class SMTPMailer:
     def __init__(self, config):
         self.config = dict(config or {})

@@ -1,11 +1,13 @@
 """Private meeting calendar and an administrator-only scheduler."""
 import calendar
 from datetime import datetime, time, timedelta, timezone
+from email.utils import parseaddr
 from html import escape
 import logging
 import time as clock
 from zoneinfo import ZoneInfo, available_timezones
 import streamlit as st
+from smtp_mailer import SMTPMailer, delivery_error
 from access import has_full_access
 from workspace_storage import SupabaseWorkspaceService
 from sheet_dashboard import snapshot_scope, invalidate_snapshot
@@ -148,12 +150,13 @@ def meeting_admin(settings,identity,allowed):
             link=st.text_input('Meeting link',value=meeting['link'] if meeting else '',placeholder='Paste the meeting link',max_chars=2000,help='Paste a link from your chosen meeting service.')
             agenda=st.text_area('Agenda / meeting notes',value=meeting['agenda'] if meeting else '',max_chars=5000)
             collaborators=st.multiselect('Invite approved collaborators',approved,default=sorted(existing&set(approved)))
-            partners=st.text_area('Additional partner email addresses',value=', '.join(sorted(existing-set(approved))),help='Separate addresses with commas, semicolons or new lines. Up to 50 invitees in total.')
+            partners=st.text_area('Additional partner email addresses',value=', '.join(sorted(existing-set(approved))),help='Enter name@example.org or Name <name@example.org>. Separate addresses with commas, semicolons or new lines. Up to 50 invitees in total.')
             submitted=st.form_submit_button('Save meeting',type='primary')
         if submitted:
             try:
                 fields=dict(title=title,agenda=agenda,start=local_instant(start_day,start_clock,zone),end=local_instant(end_day,end_clock,zone),timezone=zone,link=link,attendees=','.join(collaborators)+','+partners)
-                result=store_for(settings,identity,allowed).save_meeting(fields,current['version'],email.get('from_address') or identity()['email'],meeting['id'] if meeting else None)
+                organizer=parseaddr(str(email.get('from_address') or identity()['email']))[1].strip()
+                result=store_for(settings,identity,allowed).save_meeting(fields,current['version'],organizer,meeting['id'] if meeting else None)
             except (ValueError,PermissionError) as exc:st.error(str(exc))
             except Exception:
                 logging.getLogger(__name__).warning('Meeting save could not be confirmed.')
@@ -166,13 +169,27 @@ def meeting_admin(settings,identity,allowed):
         queued=[e for e in history if e['state']=='queued']
         st.write('**Invitations and updates**')
         st.caption('Email sender: '+str(email.get('from_address','Not configured'))+f' · {len(queued)} queued notices')
+        if configured(email) and st.button('Verify email sender (no invitation sent)',key='pm_meeting_verify_sender_'+selected):
+            sender=parseaddr(str(email.get('from_address','')))[1].strip()
+            try:
+                with st.spinner('Checking the SMTP sender connection…'):
+                    SMTPMailer(email).verify_mail_sender(sender)
+            except Exception as error:
+                logging.getLogger(__name__).exception('Meeting email sender verification failed.')
+                st.error(delivery_error(error))
+            else:
+                st.success('SMTP sender login verified. No email was sent.')
         if st.button('Send queued invitations',disabled=not queued or not configured(email),key='pm_meeting_send_'+selected):
             try:
                 with st.spinner('Sending meeting invitations…'):result=send_invitations(store_for(settings,identity,allowed),email,meeting['id'])
-            except Exception:
+            except Exception as error:
                 invalidate_meetings();st.session_state.pop('pm_meeting_editor_snapshot',None)
-                st.error('Delivery could not be completed. Reload the invitation history before trying again. Claimed or uncertain deliveries will not be automatically repeated.')
-            else:after_save(f"Mail server accepted {result['sent']} notices; {result['skipped']} skipped; {result['uncertain']} uncertain. Acceptance does not confirm inbox delivery.",meeting['id'])
+                logging.getLogger(__name__).exception('Meeting invitation sending stopped during sender verification or preparation.')
+                st.error(delivery_error(error)+' Reload invitation history before retrying. No automatic retry is made for claimed or uncertain deliveries.')
+            else:
+                message=f"Mail server accepted {result['sent']} notices; {result['skipped']} skipped; {result['uncertain']} uncertain. Acceptance does not confirm inbox delivery."
+                if result.get('error'):message+=' Delivery detail: '+result['error']
+                after_save(message,meeting['id'])
         if not configured(email):st.info('Configure the existing email sender to deliver these invitations. The schedule remains saved in the workbook.')
         st.caption('Each email shows only its recipient. Claimed or uncertain attempts are not retried automatically. Editing a meeting queues fresh updates; removing a guest queues a cancellation for them.')
         if history:st.dataframe([{'Recipient':e['recipient'],'Notice':e['method'],'Delivery':e['state'],'Updated UTC':e['updated_at']} for e in history],hide_index=True,width='stretch')
