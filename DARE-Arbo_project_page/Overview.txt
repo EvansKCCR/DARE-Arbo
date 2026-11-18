@@ -2,4 +2,4 @@ DARE-Arbo is a novel endpoint-specific appraisal framework developed to improve 
 
 By addressing important gaps in existing prevalence, diagnostic, and risk-of-bias assessment tools, DARE-Arbo provides a standardized, transparent, and digitally supported approach for assessing the quality, interpretability, and comparability of arbovirus surveillance data. The framework is designed to support researchers, public health practitioners, evidence-synthesis teams, and decision-makers in generating more robust, transparent, and context-sensitive evidence for surveillance, policy, and outbreak preparedness. Read the accessible project documents for additional details. 
 
-You can access the digital workspace [here](https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/). 
+You can access the digital workspace [here](https://dare-arbo-tool.streamlit.app//). 
