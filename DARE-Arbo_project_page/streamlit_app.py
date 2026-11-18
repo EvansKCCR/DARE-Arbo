@@ -12,7 +12,7 @@ from supabase_auth import (SupabaseAuthError, configured as supabase_configured,
     current_identity, send_code, sign_out, verify_code)
 
 ROOT = Path(__file__).resolve().parent
-WORKSPACE_URL = 'https://dare-arbo-3gdxlreojotdajtcsf5epr.streamlit.app/'
+WORKSPACE_URL = 'https://dare-arbo-tool.streamlit.app/'
 SUPABASE_PROJECT_URL = 'https://hoazlvirvcbobjvjewlv.supabase.co'
 STUDY = json.loads((ROOT / 'study_data.json').read_text(encoding='utf-8'))
 st.set_page_config(page_title='DARE-Arbo | Study & collaboration', page_icon='🧬', layout='wide')
