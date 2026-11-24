@@ -150,6 +150,7 @@ def meeting_admin(settings,identity,allowed):
             title=st.text_input('Meeting title',value=meeting['title'] if meeting else '',max_chars=200)
             zones=sorted(available_timezones())
             zone=st.selectbox('Meeting time zone',zones,index=zones.index(tz.key),help='Both start and end use this time zone.')
+            st.caption('Set the end after the start. A single meeting can last up to seven days.')
             left,right=st.columns(2)
             start_day=left.date_input('Start date',value=start.date());start_clock=left.time_input('Start time',value=start.time(),step=60)
             end_day=right.date_input('End date',value=end.date());end_clock=right.time_input('End time',value=end.time(),step=60)

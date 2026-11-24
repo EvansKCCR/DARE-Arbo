@@ -79,7 +79,9 @@ def clean_fields(fields):
     try:ZoneInfo(clean['timezone'])
     except (ZoneInfoNotFoundError,ValueError):raise ValueError('Choose a valid IANA time zone, for example Africa/Accra.') from None
     start,end=instant(clean['start']),instant(clean['end'])
-    if not timedelta(0)<end-start<=timedelta(days=7):raise ValueError('The meeting must end after it starts and last no longer than seven days.')
+    duration=end-start
+    if duration<=timedelta(0):raise ValueError('The meeting end date and time must be later than the start date and time.')
+    if duration>timedelta(days=7):raise ValueError('A single meeting cannot last longer than seven days. Check the end date and time, or schedule separate meetings.')
     clean.update(start=start.isoformat(),end=end.isoformat(),attendees=invitees(fields['attendees']))
     return clean
 
