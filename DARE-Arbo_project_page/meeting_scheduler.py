@@ -121,7 +121,11 @@ def meeting_admin(settings,identity,allowed):
     current=st.session_state.get('pm_meeting_editor_snapshot')
     if not current or current['scope']!=scope:
         try:current=load_meetings(settings,identity,allowed)
-        except Exception:st.error('Check collaborator access and the private Supabase workbook before scheduling meetings.');return
+        except (ValueError,PermissionError) as error:
+            st.error(str(error));return
+        except Exception as error:
+            logging.getLogger(__name__).exception('Meeting records could not be loaded for scheduling.')
+            st.error(f'Meeting records could not be loaded ({type(error).__name__}). Ask the administrator to check the private workbook and app logs before changing invitation history.');return
         st.session_state['pm_meeting_editor_snapshot']=current
     if st.session_state.get('pm_meeting_flash'):st.success(st.session_state.pop('pm_meeting_flash'))
     if st.button('Reload meeting editor (discards unsaved changes)',key='pm_meeting_reload'):
@@ -132,6 +136,8 @@ def meeting_admin(settings,identity,allowed):
     selected=st.selectbox('Meeting to manage',options,index=options.index(focus) if focus in options else 0,
                           format_func=lambda k:'Schedule a new meeting' if k=='new' else meetings[k]['title']+' · '+meetings[k]['status'],key='pm_meeting_manage_'+str(generation))
     meeting=meetings.get(selected)
+    if meeting and st.button('Schedule another meeting',key='pm_meeting_new_from_'+selected+'_'+str(generation)):
+        after_save('Ready to schedule another meeting. Existing invitation history was kept.', 'new')
     email=cfg.get('email',{})
     if not meeting or meeting['status']!='Cancelled':
         tz=ZoneInfo(meeting['timezone'] if meeting else 'Africa/Accra')
@@ -169,6 +175,7 @@ def meeting_admin(settings,identity,allowed):
         queued=[e for e in history if e['state']=='queued']
         st.write('**Invitations and updates**')
         st.caption('Email sender: '+str(email.get('from_address','Not configured'))+f' · {len(queued)} queued notices')
+        st.caption('Invitation records are kept separately for each meeting; they do not block scheduling a new one.')
         if configured(email) and st.button('Verify email sender (no invitation sent)',key='pm_meeting_verify_sender_'+selected):
             sender=parseaddr(str(email.get('from_address','')))[1].strip()
             try:
