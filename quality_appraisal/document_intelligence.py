@@ -12,11 +12,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
+import json
 import re
 from typing import Any, BinaryIO, Iterable, Mapping, Sequence
 
 
-ENGINE_VERSION = "2026.10.24.1"
+ENGINE_VERSION = "2026.11.26.1"
 UNRESOLVED = "Could not be established from the article"
 
 
@@ -169,6 +170,7 @@ ASSAY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Microneutralization", ("microneutralization", "microneutralisation")),
     ("RT-qPCR", ("rt-qpcr", "qrt-pcr", "real-time rt-pcr", "real time rt-pcr")),
     ("RT-PCR/PCR", ("rt-pcr", "polymerase chain reaction", " pcr")),
+    ("NAAT", ("naat", "nucleic acid amplification")),
     ("Virus isolation", ("virus isolation", "viral culture")),
     ("Sequencing", ("sequencing", "sequence-confirmed", "genotyping")),
 )
@@ -364,60 +366,203 @@ def _detect_assays(spans: Sequence[TextSpan], endpoint_terms: Sequence[str], vir
     return found
 
 
-def _count_candidates(spans: Sequence[TextSpan], endpoint_terms: Sequence[str], virus: str) -> list[dict[str, Any]]:
-    relevant = _ranked_spans(spans, tuple(endpoint_terms) + ("positive", "tested", "prevalence"), 40, virus)
-    virus_terms = next((items for label, items in VIRUS_PATTERNS if label == virus), ())
-    other_virus_terms = tuple(
-        term for label, items in VIRUS_PATTERNS if label != virus for term in items
-    )
-    if virus_terms:
-        relevant = [
-            span for span in relevant
-            if any(term in span.text.lower() for term in virus_terms)
-            or not any(term in span.text.lower() for term in other_virus_terms)
-        ]
+ASSAY_ENDPOINT_MARKERS = {
+    "prior_exposure": r"\bigg\b",
+    "presumptive_igm": r"\bigm\b",
+    "presumptive_ns1": r"\b(?:ns1|nonstructural protein 1)\b",
+    "neutralizing_antibody": r"\b(?:prnt\d*|(?:micro)?neutraliz\w*|neutralis\w*|plaque reduction)\b",
+    "confirmed_active": r"\b(?:(?:rt[- ]?)?q?pcr|naat|viral rna|virus isolation|sequencing)\b",
+}
+NEUTRALIZATION_ASSAYS = {"PRNT", "Microneutralization"}
+MOLECULAR_ASSAYS = {"RT-qPCR", "RT-PCR/PCR", "Virus isolation", "Sequencing", "NAAT"}
+_NUMBER = r"(?<![\w.,])(\d{1,3}(?:,\d{3})+|\d{1,7})(?![\w.,]\d)"
+_PAIR = re.compile(_NUMBER + r"\s*(?:/|\bout of\b|\bof\b)\s*" + _NUMBER + r"(?!\d|\s*[/%])", re.I)
+_OBSERVED_OUTCOME = re.compile(r"\b(?:positive|positivity|seropositive|seroprevalence|prevalence|detected|confirmed)\b", re.I)
+_NON_OBSERVED = re.compile(r"\b(?:posterior|expected positives?|model[- ](?:derived|predicted)|simulated|adjusted prevalence|predicted positives?)\b", re.I)
+_PLAN = re.compile(r"\b(?:plan(?:ned)?|intend(?:ed)?|scheduled|were to be|would be|targeted for|protocol specified)\b", re.I)
+_VERIFIED = re.compile(r"\b(?:retested|underwent|received|completed|were verified|were (?:subsequently )?(?:re-?tested|confirmed)|was performed|confirmed by|tested by|tested using)\b", re.I)
+_SCREEN_POS = r"(?:(?:screen(?:ing)?|primary|elisa|igg|igm|ns1)[- ]+)?positiv(?:e|es)"
+_SUBSET = re.compile(r"\b(?:not\s+(?:all|every|each)|subset|some (?:of the )?" + _SCREEN_POS + r"|selected (?:positive|specimens|samples)|available specimens|when (?:samples|specimens) were available|sufficient volume|only\s+\d+|\bexcept\b)\b", re.I)
+_RANDOM_SUBSET = re.compile(r"\b(?:random(?:ly selected)?|representative)[- ]+subset\b|\b(?:subset|sample)\b.{0,45}\b(?:randomly selected|representative)\b", re.I)
+_ALL_POS = re.compile(r"\b(?:all|every|each)\s+(?:the\s+)?" + _SCREEN_POS + r"\b", re.I)
+_STAGED = re.compile(r"\b(?:(?:screen(?:ing)?|primary)[- ]+positiv(?:e|es)|subset of (?:the )?positive|retested|verif(?:ied|ication)|confirmatory|confirmation|validation (?:subset|set|sample|panel))\b", re.I)
+_STRATUM = re.compile(r"\b(?:elisa|igg|igm|ns1)[- ]+positiv(?:e|es)\s+(?:specimens?|samples?|participants?|patients?|sera)\b", re.I)
+_TWO_STRATA = re.compile(r"\b(?:screen(?:ing)?[- ]+)?positiv(?:e|es)\b.{0,35}\band\b.{0,25}\b(?:screen(?:ing)?[- ]+)?negativ(?:e|es)\b", re.I)
+
+
+def _virus_mentions(text: str) -> set[str]:
+    return {
+        name for name, terms in VIRUS_PATTERNS
+        if any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.I) for term in terms)
+    }
+
+
+def _endpoint_mentions(text: str) -> list[tuple[int, str]]:
+    return sorted((hit.start(), endpoint) for endpoint, pattern in ASSAY_ENDPOINT_MARKERS.items()
+                  for hit in re.finditer(pattern, text, re.I))
+
+
+def _pair_value(match: re.Match[str]) -> tuple[int, int]:
+    return int(match[1].replace(",", "")), int(match[2].replace(",", ""))
+
+
+def _verification_pair(span: TextSpan) -> tuple[int, int] | None:
+    """Extract actual retested / screen-positive eligible, not assay positives."""
+    for match in _PAIR.finditer(span.text):
+        tail = span.text[match.end():match.end() + 125]
+        if re.match(r"\s+(?:of the\s+)?" + _SCREEN_POS
+                    + r"\b(?:\s+(?:specimens?|samples?|participants?|patients?|sera))?\s+(?:were\s+)?(?:actually\s+)?(?:retested|tested|underwent|received|were\s+verified)\b", tail, re.I):
+            if not _PLAN.search(span.text[max(0, match.start() - 30):match.end() + 18]):
+                return _pair_value(match)
+    return None
+
+
+def _count_candidates(
+    spans: Sequence[TextSpan], endpoint_key: str, virus: str, single_virus: bool,
+    staged: bool = False,
+) -> list[dict[str, Any]]:
+    """Return observed outcome pairs with an explicit, unambiguous local link."""
     candidates: list[dict[str, Any]] = []
-    patterns = (
-        re.compile(r"\b(\d{1,7})\s*/\s*(\d{1,7})\b"),
-        re.compile(r"\b(\d{1,7})\s+(?:of|out of)\s+(\d{1,7})\b", re.I),
-    )
-    for span in relevant:
-        for pattern in patterns:
-            for match in pattern.finditer(span.text):
-                numerator, denominator = int(match.group(1)), int(match.group(2))
-                if denominator <= 0 or numerator > denominator:
-                    continue
-                candidates.append({"numerator": numerator, "denominator": denominator, "span": span, "matched": match.group(0)})
+    marker_key = "neutralizing_antibody" if staged and endpoint_key == "prior_exposure" else endpoint_key
+    if marker_key not in ASSAY_ENDPOINT_MARKERS:
+        return candidates  # Validation needs an explicit stratum-specific contingency table.
+    for span in spans:
+        text = span.text
+        if not _OBSERVED_OUTCOME.search(text) or _NON_OBSERVED.search(text) or _PLAN.search(text):
+            continue
+        mentions = _virus_mentions(text)
+        if (mentions and mentions != {virus}) or (not mentions and not single_virus):
+            continue
+        matches = list(_PAIR.finditer(text))
+        markers = _endpoint_mentions(text[:matches[0].start()] if len(matches) > 1 else text) if matches else []
+        keys = [key for _, key in markers]
+        if len(matches) > 1:
+            # Map parallel marker/result lists only when the authors explicitly
+            # say "respectively" and every marker has one corresponding pair.
+            if not re.search(r"\brespectively\b", text, re.I) or len(keys) != len(matches) or len(set(keys)) != len(keys):
+                continue
+            selected = [match for key, match in zip(keys, matches) if key == marker_key]
+        elif matches and set(keys) == {marker_key}:
+            selected = matches
+        elif matches and staged and marker_key in keys and _STAGED.search(text):
+            # The screen marker may appear earlier in conditional results.
+            selected = matches if keys[-1] == marker_key else []
+        else:
+            continue
+        for match in selected:
+            numerator, denominator = _pair_value(match)
+            if (denominator <= 0 or numerator > denominator or _verification_pair(span)
+                or _TWO_STRATA.search(text) or text[:match.start()].rstrip().endswith("/")):
+                continue
+            if not staged and (_STAGED.search(text) or (_STRATUM.search(text) and len(set(keys)) > 1)):
+                continue  # Not direct prevalence in the population tested.
+            if staged and not _STAGED.search(text):
+                continue
+            candidates.append({"numerator": numerator, "denominator": denominator, "span": span, "matched": match.group(0)})
     return candidates
 
 
-def _confirmation(spans: Sequence[TextSpan], assays: Sequence[tuple[str, TextSpan]], virus: str) -> tuple[EvidenceItem, EvidenceItem, EvidenceItem]:
-    confirmation_terms = ("confirmed by", "confirmation", "retested", "verified", "all positive", "subset of positive", "random subset", "selected positive")
-    matches = _ranked_spans(spans, confirmation_terms, 5, virus)
-    confirmatory_names = [name for name, _ in assays if name in {"PRNT", "Microneutralization", "RT-qPCR", "RT-PCR/PCR", "Virus isolation", "Sequencing"}]
-    if not matches or not confirmatory_names:
-        unresolved = _item("confirmatory_assay", None, UNRESOLVED)
-        return unresolved, _item("confirmation_coverage", None, UNRESOLVED), _item("confirmation_role", None, UNRESOLVED)
-    span = matches[0]
-    lowered = span.text.lower()
-    if any(term in lowered for term in ("all positive", "all screen-positive", "all screening-positive", "every positive")):
-        coverage = "All screening-positive specimens"
-        confidence = "HIGH"
-    elif any(term in lowered for term in ("random subset", "representative subset", "predefined subset")):
-        coverage = "Representative/random subset"
-        confidence = "HIGH"
-    elif any(term in lowered for term in ("subset", "selected", "available specimens", "sufficient volume")):
-        coverage = "Selected subset"
-        confidence = "MODERATE"
-    else:
-        coverage = UNRESOLVED
-        confidence = "LOW"
-    role = "Endpoint-linked confirmation" if any(term in lowered for term in ("confirmed positive", "confirmed infection", "confirmed seropositivity")) else "Ancillary or unresolved confirmation role"
-    return (
-        _item("confirmatory_assay", span, "; ".join(confirmatory_names), confirmatory_names, inference="DERIVED", confidence="MODERATE"),
-        _item("confirmation_coverage", span, coverage, coverage, inference="DERIVED", confidence=confidence),
-        _item("confirmation_role", span, role, role, inference="DERIVED", confidence="MODERATE"),
+def _confirmation(
+    spans: Sequence[TextSpan], endpoint_key: str, virus: str, single_virus: bool,
+) -> dict[str, EvidenceItem]:
+    fields = {name: _item(name, None, UNRESOLVED) for name in (
+        "confirmatory_assay", "confirmation_coverage", "confirmation_role",
+        "verification_expected", "verification_completed",
+    )}
+    possible_assays = (
+        MOLECULAR_ASSAYS if endpoint_key == "confirmed_active" else
+        NEUTRALIZATION_ASSAYS if endpoint_key == "prior_exposure" else set()
     )
+    if not possible_assays:
+        return fields
+    linked: list[tuple[TextSpan, list[str]]] = []
+    for span in spans:
+        mentions = _virus_mentions(span.text)
+        if (mentions and mentions != {virus}) or (not mentions and not single_virus):
+            continue
+        names = [name for name, terms in ASSAY_PATTERNS if name in possible_assays
+                 and any(term in span.text.lower() for term in terms)]
+        if "RT-qPCR" in names and "RT-PCR/PCR" in names:
+            names.remove("RT-PCR/PCR")
+        if names and (
+            _STAGED.search(span.text) or _STRATUM.search(span.text)
+            or re.search(r"\b(?:some (?:of the )?positives?|(?:all|every) positives?)\b", span.text, re.I)
+        ):
+            linked.append((span, names))
+    if not linked:
+        return fields
+    assay_span, names = next(((span, names) for span, names in linked if not _PLAN.search(span.text)), linked[0])
+    fields["confirmatory_assay"] = _item("confirmatory_assay", assay_span, "; ".join(names), names,
+                                         inference="DERIVED", confidence="LOW" if _PLAN.search(assay_span.text) else "MODERATE")
+    observed = [(span, names) for span, names in linked if not _PLAN.search(span.text)]
+    if any(_TWO_STRATA.search(span.text) and not _ALL_POS.search(span.text) for span, _ in linked):
+        fields["confirmation_role"] = _item(
+            "confirmation_role", assay_span, "Ancillary positive/negative assay validation",
+            inference="DERIVED", confidence="MODERATE",
+        )
+        return fields
+    # An unlabelled actual/eligible pair can supplement an unambiguous single-virus pathway.
+    completion = []
+    competing_stage = "neutralizing_antibody" if endpoint_key == "confirmed_active" else "confirmed_active"
+    other_family_staged = any(
+        any(key == competing_stage for _, key in _endpoint_mentions(span.text))
+        and (_STAGED.search(span.text) or _STRATUM.search(span.text)) for span in spans
+    )
+    for span in spans:
+        pair = _verification_pair(span)
+        if not pair or not 0 <= pair[0] <= pair[1] or not pair[1]:
+            continue
+        if any(span is item[0] for item in linked):
+            completion.append((span, pair))
+        elif (
+            single_virus
+            and all(key not in {"confirmed_active", "neutralizing_antibody"} for _, key in _endpoint_mentions(span.text))
+            and not other_family_staged
+            and _virus_mentions(span.text) in (set(), {virus})
+        ):
+            completion.append((span, pair))
+    complete = next((span for span, _ in observed if _ALL_POS.search(span.text)
+                     and _VERIFIED.search(span.text) and not _SUBSET.search(span.text)
+                     and not re.search(r"\b(?:none|never|not)\b", span.text, re.I)), None)
+    partial = next((span for span, _ in observed if _SUBSET.search(span.text)), None)
+    random = next((span for span, _ in observed if _RANDOM_SUBSET.search(span.text) and _VERIFIED.search(span.text)
+                   and not re.search(r"\b(?:no|not|never)\b", span.text, re.I)), None)
+    if completion:
+        pairs = {pair for _, pair in completion}
+        if len(pairs) == 1:
+            span, (actual, expected) = completion[0]
+            if 0 <= actual <= expected and expected > 0:
+                fields["verification_completed"] = _item("verification_completed", span, actual)
+                fields["verification_expected"] = _item("verification_expected", span, expected)
+                if actual < expected:
+                    partial = span
+                elif not partial:
+                    complete = span
+        else:
+            partial = completion[0][0]  # Contradictory completion figures cannot establish Tier B.
+    if random and not complete:
+        coverage, source, confidence = "Representative/random subset", random, "MODERATE"
+    elif partial:
+        coverage, source, confidence = "Selected subset", partial, "MODERATE"
+    elif complete:
+        coverage, source, confidence = "All screening-positive specimens", complete, "HIGH"
+    else:
+        coverage, source, confidence = UNRESOLVED, assay_span, "UNRESOLVED"
+    fields["confirmation_coverage"] = _item("confirmation_coverage", source, coverage, inference="DERIVED", confidence=confidence)
+    # Staged molecular outcomes are a distinct endpoint, but a neutralization
+    # test only replaces binding-antibody positivity when the result defines that estimand.
+    role_span = next((span for span, _ in observed if re.search(
+        r"\b(?:confirmed (?:infection|seropositivity|positive)|positivity (?:was )?defined)\b", span.text, re.I)), None)
+    staged = (
+        endpoint_key == "confirmed_active" and any(
+            _ALL_POS.search(span.text) or _STRATUM.search(span.text)
+            or re.search(r"\bscreen(?:ing)?[- ]+positiv", span.text, re.I) for span, _ in linked
+        )
+    ) or role_span is not None
+    role = "Endpoint-linked confirmation" if staged else "Ancillary or unresolved confirmation role"
+    fields["confirmation_role"] = _item("confirmation_role", role_span or assay_span, role,
+                                         inference="DERIVED", confidence="MODERATE")
+    return fields
 
 
 def _path_for(endpoint_key: str, coverage: str, confirmation_role: str) -> str:
@@ -483,24 +628,30 @@ def extract_document_model(sources: Sequence[Mapping[str, Any]], rule_version: s
     for source in sources:
         combined_pages.extend(str(page) for page in source.get("pages", []))
     combined_text = " ".join(span.text.lower() for span in spans)
-    document_id = sources[0].get("sha256", "") or sha256("\n".join(combined_pages).encode("utf-8")).hexdigest()
+    bundle_parts = [(source.get("kind"), source.get("name"), source.get("sha256") or
+                     sha256("\n".join(source.get("pages", [])).encode("utf-8")).hexdigest())
+                    for source in sources]
+    document_id = sha256(json.dumps(bundle_parts, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     target = _first_classification(spans, TARGET_VOCABULARY, "target_population", "article")
     frame = _first_classification(spans, FRAME_VOCABULARY, "sampling_frame", "article")
     recruitment = _detect_recruitment(spans)
     article_fields = {"target_population": target, "sampling_frame": frame, **recruitment}
 
-    viruses = [label for label, terms in VIRUS_PATTERNS if any(term in combined_text for term in terms)]
+    viruses = [label for label, _ in VIRUS_PATTERNS if label in _virus_mentions(combined_text)]
     if not viruses:
         viruses = ["Virus unresolved"]
+    single_virus = len(viruses) == 1 and viruses[0] != "Virus unresolved"
     random_two_strata_validation = bool(
-        re.search(r"random(?:ly)?\s+(?:selected\s+)?(?:subset[s]?\s+of\s+)?(?:screening[- ]|primary[- ])?positive", combined_text)
+        any(_TWO_STRATA.search(span.text) and re.search(r"\brandom\w*|validation\b", span.text, re.I) for span in spans)
+        or (re.search(r"random(?:ly)?\s+(?:selected\s+)?(?:subset[s]?\s+of\s+)?(?:screening[- ]|primary[- ])?positive", combined_text)
         and re.search(r"random(?:ly)?\s+(?:selected\s+)?(?:subset[s]?\s+of\s+)?(?:screening[- ]|primary[- ])?negative", combined_text)
+        )
     )
     endpoints = []
     for definition in ENDPOINT_PATTERNS:
         endpoint_key, _, terms, _ = definition
-        if not any(term in combined_text for term in terms):
+        if not any(term in combined_text for term in terms) and not (endpoint_key == "assay_performance" and random_two_strata_validation):
             continue
         if endpoint_key == "neutralizing_antibody":
             independent_neutralization_endpoint = bool(
@@ -532,46 +683,124 @@ def extract_document_model(sources: Sequence[Mapping[str, Any]], rule_version: s
             if len(viruses) > 1 and endpoint_terms and not linked_spans:
                 continue
             assays = _detect_assays(spans, endpoint_terms, virus)
-            primary = assays[0] if assays else None
-            confirmation_assay, confirmation_coverage, confirmation_role = _confirmation(spans, assays, virus)
-            counts = _count_candidates(spans, endpoint_terms, virus)
+            confirmation = _confirmation(spans, endpoint_key, virus, single_virus)
+            if (endpoint_key == "confirmed_active" and
+                confirmation["confirmation_role"].value == "Ancillary positive/negative assay validation"
+                and not _count_candidates(spans, endpoint_key, virus, single_virus)):
+                continue
+            path = _path_for(endpoint_key, str(confirmation["confirmation_coverage"].final_value),
+                             str(confirmation["confirmation_role"].final_value))
+            staged = path.endswith(("_tier_b", "_tier_c", "_tier_d"))
+            # Use evidence that links the assay to the endpoint, not a different
+            # assay merely mentioned in the same paper.
+            assay_keys = {
+                "IgG ELISA": {"prior_exposure"}, "IgM ELISA": {"presumptive_igm"},
+                "NS1 antigen assay": {"presumptive_ns1"},
+                **{name: {"confirmed_active"} for name in MOLECULAR_ASSAYS},
+                **{name: {"neutralizing_antibody"} for name in NEUTRALIZATION_ASSAYS},
+            }
+            eligible_assays = [(name, span) for name, span in assays
+                               if (not _virus_mentions(span.text) or _virus_mentions(span.text) == {virus})
+                               and (endpoint_key in assay_keys.get(name, set()) or
+                                    {key for _, key in _endpoint_mentions(span.text)} == {endpoint_key})]
+            if staged and endpoint_key == "confirmed_active":
+                screen_assays = [(name, span) for name, span in assays
+                                 if name not in MOLECULAR_ASSAYS | NEUTRALIZATION_ASSAYS
+                                 and re.search(r"\bscreen(?:ed|ing)\b", span.text, re.I)
+                                 and (_virus_mentions(span.text) == {virus} or
+                                      (single_virus and not _virus_mentions(span.text)))]
+                primary = screen_assays[0] if screen_assays else None
+            else:
+                primary = eligible_assays[0] if eligible_assays else None
+            counts = _count_candidates(spans, endpoint_key, virus, single_virus, staged)
+            screen_counts: list[dict[str, Any]] = []
+            if staged:
+                screen_endpoints = (
+                    {"prior_exposure"} if endpoint_key == "prior_exposure" else
+                    {key for _, key in _endpoint_mentions(primary[1].text)} & {"prior_exposure", "presumptive_igm", "presumptive_ns1"}
+                    if primary else set()
+                )
+                if len(screen_endpoints) == 1:
+                    screen_counts = _count_candidates(spans, next(iter(screen_endpoints)), virus, single_virus)
             fields: dict[str, EvidenceItem] = {
                 "virus": _item("virus", linked_spans[0] if linked_spans else (spans[0] if spans else None), virus, virus, inference="DERIVED", confidence="MODERATE"),
                 "endpoint": _item("endpoint", linked_spans[0] if linked_spans else None, endpoint_label, endpoint_key, inference="DERIVED", confidence="MODERATE"),
                 "primary_assay": _item("primary_assay", primary[1] if primary else None, primary[0] if primary else UNRESOLVED, primary[0] if primary else None, inference="DERIVED", confidence="MODERATE"),
-                "confirmatory_assay": confirmation_assay,
-                "confirmation_coverage": confirmation_coverage,
-                "confirmation_role": confirmation_role,
+                **confirmation,
                 "target_population": target,
                 "sampling_frame": frame,
                 **recruitment,
             }
             conflicts: list[dict[str, Any]] = []
-            if counts:
-                selected = counts[0]
-                fields["numerator"] = _item("numerator", selected["span"], selected["numerator"], selected["numerator"], notes="Observed count extracted from an endpoint-relevant n/N expression; reviewer confirmation required.")
-                fields["denominator"] = _item("denominator", selected["span"], selected["denominator"], selected["denominator"], notes="Observed count extracted from an endpoint-relevant n/N expression; reviewer confirmation required.")
-                pairs = sorted({(row["numerator"], row["denominator"]) for row in counts})
+            for pairs_source, n_field, d_field, group in (
+                (counts, "numerator", "denominator", "endpoint_numerator_denominator"),
+                (screen_counts, "screen_positive", "screen_tested", "screening_numerator_denominator"),
+            ):
+                if group.startswith("screening") and not staged:
+                    continue
+                pairs = {(row["numerator"], row["denominator"]) for row in pairs_source}
+                if len(pairs) == 1:
+                    selected = pairs_source[0]
+                    scope_note = (
+                        "Observed result among retested screening positives; not a population estimator."
+                        if staged and group.startswith("endpoint") else
+                        "Observed counts linked to this endpoint result; reviewer confirmation required."
+                    )
+                    fields[n_field] = _item(n_field, selected["span"], selected["numerator"], notes=scope_note)
+                    fields[d_field] = _item(d_field, selected["span"], selected["denominator"], notes=scope_note)
+                else:
+                    fields[n_field] = _item(n_field, None, UNRESOLVED)
+                    fields[d_field] = _item(d_field, None, UNRESOLVED)
                 if len(pairs) > 1:
                     conflict = {
-                        "field": "endpoint_numerator_denominator",
-                        "candidates": [{"numerator": n, "denominator": d} for n, d in pairs],
-                        "reason": "Multiple endpoint-relevant n/N expressions were detected across the article bundle.",
+                        "field": group,
+                        "candidates": [{"numerator": row["numerator"], "denominator": row["denominator"],
+                                        "evidence_text": row["span"].text,
+                                        "location": asdict(SourceLocation(row["span"].document, row["span"].page, row["span"].section))}
+                                       for row in pairs_source],
+                        "reason": "Multiple observed n/N pairs could correspond to the same endpoint or stage; no pair was selected.",
                         "resolution_status": "needs_review",
                     }
                     conflicts.append(conflict)
-                    fields["numerator"].conflicts.append(conflict)
-                    fields["denominator"].conflicts.append(conflict)
-                    fields["numerator"].confidence = "LOW"
-                    fields["denominator"].confidence = "LOW"
-            else:
-                fields["numerator"] = _item("numerator", None, UNRESOLVED)
-                fields["denominator"] = _item("denominator", None, UNRESOLVED)
-            path = _path_for(endpoint_key, str(confirmation_coverage.final_value), str(confirmation_role.final_value))
-            if endpoint_key == "assay_performance" and any(
-                name in {"RT-qPCR", "RT-PCR/PCR", "Virus isolation", "Sequencing"}
-                for name, _ in assays
-            ):
+                    for field_id in (n_field, d_field):
+                        fields[field_id].conflicts.append(conflict)
+                        fields[field_id].confidence = "LOW"
+                if staged and group.startswith("endpoint") and len(pairs) == 1 and not isinstance(fields["verification_completed"].value, int):
+                    fields["verification_completed"] = _item("verification_completed", selected["span"], selected["denominator"])
+            if staged:
+                completed = fields["verification_completed"]
+                tested = completed.value
+                planned = fields["screen_positive"].value
+                disputed_verification = False
+                if isinstance(tested, int) and isinstance(fields["denominator"].value, int) and tested != fields["denominator"].value:
+                    disputed_verification = True
+                    options = [
+                        {"denominator": item.value, "evidence_text": item.evidence_text, "location": asdict(item.location)}
+                        for item in (fields["verification_completed"], fields["denominator"]) if item.location
+                    ]
+                    conflict = {
+                        "field": "verification_denominator",
+                        "candidates": options,
+                        "reason": "The reported retested count and endpoint result denominator differ; their relationship requires review.",
+                        "resolution_status": "needs_review",
+                    }
+                    conflicts.append(conflict)
+                    for field_id in ("numerator", "denominator", "verification_completed"):
+                        fields[field_id] = EvidenceItem(field_id, conflicts=[conflict], confidence="LOW")
+                if isinstance(tested, int) and isinstance(planned, int) and tested < planned and path.endswith("_tier_b"):
+                    fields["confirmation_coverage"] = EvidenceItem(
+                        "confirmation_coverage", "Selected subset", evidence_text=completed.evidence_text,
+                        location=completed.location, confidence="MODERATE", inference_level="DERIVED",
+                        notes="The completed verification denominator is smaller than the observed screening-positive set.",
+                    )
+                    path = _path_for(endpoint_key, "Selected subset", "Endpoint-linked confirmation")
+                elif disputed_verification and path.endswith("_tier_b"):
+                    fields["confirmation_coverage"] = EvidenceItem(
+                        "confirmation_coverage", evidence_text=completed.evidence_text, location=completed.location,
+                        notes="Conflicting verification denominators do not establish complete verification.",
+                    )
+                    path = _path_for(endpoint_key, UNRESOLVED, "Endpoint-linked confirmation")
+            if endpoint_key == "assay_performance" and any(name in MOLECULAR_ASSAYS for name, _ in assays):
                 path = "molecular_validation"
             if path == "serology_apparent" and endpoint_key != "prior_exposure":
                 path = default_path
@@ -606,6 +835,7 @@ def extract_document_model(sources: Sequence[Mapping[str, Any]], rule_version: s
             "extraction_engine": "DARE-Arbo shared document intelligence",
             "extraction_engine_version": ENGINE_VERSION,
             "dare_arbo_rule_version": rule_version,
+            "main_document_sha256": sources[0].get("sha256") or bundle_parts[0][2],
             "parsed_once": True,
         },
         warnings=warnings,

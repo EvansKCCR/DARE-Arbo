@@ -12,8 +12,11 @@ from dataclasses import asdict, dataclass, field
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from dare_arbo import ENDPOINTS_BY_KEY, criterion_is_applicable
+from document_intelligence import UNRESOLVED, _endpoint_mentions
 
-ASSISTANT_VERSION = "2026.10.25.1"
+
+ASSISTANT_VERSION = "2026.11.26.1"
 UNRESOLVED_ANSWER = "Could not be established from the uploaded paper."
 NOT_CLEARLY_REPORTED = "The paper does not clearly report this information."
 
@@ -126,31 +129,32 @@ INTENT_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]
     ("confirmation_complete", ("confirmation complete", "all positive", "all elisa", "all screen", "who received confirmation", "some positive"), ("confirmation", "Q6c"), ("confirm", "retested", "verified", "all positive", "subset")),
     ("confirmation", ("confirmatory", "confirmation", "role does prnt", "role does pcr", "who received prnt", "who received pcr"), ("confirmation", "Q6c"), ("confirm", "prnt", "pcr", "retested", "subset")),
     ("numerator", ("numerator", "how many were positive", "positive count"), ("counts", "Q8"), ("positive", "numerator", "prevalence")),
-    ("denominator", ("denominator", "how many were tested", "tested count", "corresponds to"), ("counts", "Q8"), ("tested", "denominator", "participants", "specimens")),
+    ("denominator", ("denominator", "how many were tested", "tested count", "corresponds to", "how many received the endpoint-defining assay"), ("counts", "Q8"), ("tested", "denominator")),
     ("target_population", ("target population", "population was studied", "general febrile", "population define"), ("population", "Q1"), ("population", "patients", "participants", "eligible")),
-    ("eligibility", ("inclusion", "exclusion", "eligible", "eligibility"), ("population", "Q1"), ("eligible", "included", "excluded", "criteria")),
     ("demographics", ("age group", "ages were", "both sexes", "sexes represented", "demographic restriction"), ("population", "Q1"), ("aged", "age", "male", "female", "sex", "gender")),
-    ("sampling_frame", ("sampling frame", "source population", "who could enter", "sentinel network", "archived specimens", "inpatient", "outpatient"), ("sampling frame", "Q3"), ("registry", "register", "sentinel", "hospital", "clinic", "household", "archived")),
-    ("recruitment", ("recruit", "participant selected", "random sampling", "consecutive", "site selected", "laboratory subsampling", "probability sampling"), ("recruitment", "Q4"), ("recruited", "enrolled", "selected", "random", "consecutive", "convenience", "purposive")),
+    ("sampling_frame", ("sampling frame", "source frame", "source population", "who could enter", "sentinel network", "archived specimens", "inpatient", "outpatient"), ("sampling frame", "Q3"), ("registry", "register", "sentinel", "hospital", "clinic", "household", "archived")),
+    ("recruitment", ("recruit", "participant selected", "participants selected", "random sampling", "site selected", "sites selected", "sites and participants selected", "consecutive", "laboratory subsampling", "probability sampling"), ("recruitment", "Q4"), ("recruited", "enrolled", "selected", "random", "consecutive", "convenience", "purposive")),
     ("primary_assay", ("primary assay", "endpoint-defining assay", "which assay defines", "assays were used", "what assays"), ("assay", "Q6a"), ("assay", "elisa", "pcr", "prnt", "ns1", "igm", "igg")),
-    ("assay_validation", ("assay validation", "assay validated", "cutoff", "controls", "reference standard", "manufacturer", "platform", "specimen was tested"), ("assay validation", "Q6b"), ("validated", "cutoff", "control", "manufacturer", "platform", "specimen")),
-    ("missingness", ("missing", "not tested", "invalid", "indeterminate", "excluded participants", "completeness"), ("missingness", "Q5"), ("missing", "excluded", "invalid", "indeterminate", "tested", "eligible")),
-    ("standardization", ("age-standard", "sex-standard", "sampling weights", "survey weights", "standardization", "standardisation"), ("analysis", "Q9"), ("age-standard", "sex-standard", "weighted prevalence", "survey weight")),
-    ("assay_adjustment", ("sensitivity/specificity", "assay sensitivity", "assay specificity", "corrected prevalence", "true prevalence", "correction method"), ("analysis", "Q10"), ("sensitivity", "specificity", "corrected prevalence", "true prevalence", "rogan", "bayesian")),
+    ("assay_validation", ("assay validation", "assay validated", "cutoff", "cut-off", "controls", "reference standard", "manufacturer", "platform", "specimen was tested"), ("assay validation", "Q6b"), ("validated", "cutoff", "control", "manufacturer", "platform", "specimen")),
+    ("missingness", ("missing", "not tested", "invalid", "indeterminate", "excluded", "completeness"), ("missingness", "Q5"), ("missing", "excluded", "invalid", "indeterminate", "not tested", "not available")),
+    ("eligibility", ("inclusion", "exclusion", "eligible", "eligibility"), ("population", "Q1"), ("eligible", "included", "excluded", "criteria")),
+    ("measurement_consistency", ("same measurement pathway", "tested differently", "testing dependent"), ("Q7",), ("all specimens", "same assay", "different", "subset", "availability")),
+    ("standardization", ("age-standard", "sex-standard", "sampling weights", "survey weights", "standardization", "standardisation", "only to regression"), ("analysis", "Q9"), ("age-standard", "sex-standard", "weighted prevalence", "survey weight")),
+    ("assay_adjustment", ("sensitivity/specificity", "sensitivity and specificity", "assay sensitivity", "assay specificity", "corrected prevalence", "true prevalence", "correction method"), ("analysis", "Q10"), ("sensitivity", "specificity", "corrected prevalence", "true prevalence", "rogan", "bayesian")),
     ("study_design", ("study design",), ("study",), ("cross-sectional", "cohort", "case-control", "survey", "surveillance")),
     ("setting", ("where was", "country", "setting", "study conducted"), ("study",), ("country", "district", "region", "hospital", "clinic", "community", "site")),
     ("study_period", ("study period", "when was", "dates", "period"), ("study",), ("between", "from", "during", "month", "year")),
-    ("reporting", ("enough information", "participant flow", "where are assay methods", "virus-specific", "reporting"), ("reporting", "Q8"), ("methods", "results", "table", "flow", "positive", "tested")),
+    ("reporting", ("enough information", "participant flow", "where are assay methods", "where are these counts", "virus-specific", "reporting"), ("reporting", "Q8"), ("methods", "results", "table", "flow", "positive", "tested")),
 )
 
 CRITERION_FIELDS: Mapping[str, tuple[str, ...]] = {
     "Q1": ("target_population",),
-    "Q2": ("target_population",),
+    "Q2": (),
     "Q3": ("sampling_frame",),
     "Q4": ("site_selection", "participant_selection", "laboratory_subsampling"),
-    "Q5": ("denominator",),
+    "Q5": ("screen_tested", "verification_expected", "verification_completed"),
     "Q6a": ("primary_assay", "endpoint"),
-    "Q6b": ("primary_assay",),
+    "Q6b": (),
     "Q6c": ("confirmatory_assay", "confirmation_coverage", "confirmation_role"),
     "Q7": ("confirmation_coverage", "laboratory_subsampling"),
     "Q8": ("numerator", "denominator"),
@@ -253,12 +257,43 @@ def _known_virus_terms() -> tuple[str, ...]:
     return tuple(term for terms in VIRUS_TERMS.values() for term in terms)
 
 
+def _supports_topic(text: str, intent: str, question: str = "") -> bool:
+    """A lexical hit is not by itself an answer to a specific question."""
+    q = question.lower()
+    constraints = {
+        "study_design": r"\b(?:this (?:study|survey) (?:was|used)|we (?:conducted|performed|used)|study design\s*:).{0,65}\b(?:cross[- ]sectional|cohort|case[- ]control|survey|surveillance)\b",
+        "study_period": r"\b(?:enroll?ed|recruited|collected|study (?:period|was conducted)|carried out)\b.{0,100}\b(?:19|20)\d{2}\b",
+        "setting": r"\b(?:study (?:was )?conducted|we conducted|patients were (?:recruited|enrolled)|study setting\s*:).{0,100}\b(?:in|at|from)\s+\w+",
+        "eligibility": r"\b(?:eligib\w*|inclusion criteria|exclusion criteria)\b",
+        "missingness": r"\b(?:not tested|missing|invalid|indeterminate|excluded|unavailable|incomplete)\b",
+        "measurement_consistency": r"\b(?:same (?:assay|procedure)|all (?:specimens|samples) were tested|tested differently|subset|different (?:assays|methods))\b",
+        "standardization": r"\b(?:weighted|standard[izs]+ed|adjusted)\b.{0,70}\bprevalence\b|\bprevalence\b.{0,70}\b(?:weight\w*|standard[izs]\w*|adjusted)\b|\b(?:logistic|risk[- ]factor)\s+regression\b",
+        "assay_adjustment": r"\b(?:corrected|adjusted|true) prevalence\b|\bprevalence\b.{0,90}\b(?:sensitivity|specificity|rogan[- ]gladen)\b",
+        "assay_validation": r"\b(?:validat\w*|cut[- ]?off|threshold|controls?|manufacturer|platform|reference standard|specimen)\b",
+    }
+    if intent == "assay_validation" and re.search(r"cut[- ]?offs?|threshold", q):
+        return bool(re.search(r"\b(?:cut[- ]?offs?|threshold)\b.{0,80}(?:\d|manufacturer.{0,20}(?:instructions|recommendation))", text, re.I))
+    if intent == "missingness" and "how many" in q:
+        return bool(re.search(r"\b\d[\d,]*\s+(?:\w+\s+){0,3}(?:not tested|missing|invalid|indeterminate|excluded)\b", text, re.I))
+    if intent == "eligibility" and "how many" in q:
+        return bool(re.search(r"\b\d[\d,]*\s+(?:\w+\s+){0,3}(?:eligible|met (?:the )?(?:inclusion|eligibility) criteria)\b", text, re.I))
+    if intent == "assay_adjustment" and "values" in q:
+        return bool(re.search(r"\b(?:sensitivity|specificity)\b.{0,32}\d", text, re.I))
+    if intent in {"study_design", "study_period", "setting"} and re.search(
+        r"\b(?:prior|previous|other|earlier)\s+(?:study|report|survey)|\b(?:et al\.|previously reported)\b", text, re.I
+    ):
+        return False
+    return intent not in constraints or bool(re.search(constraints[intent], text, re.I))
+
+
 def retrieve_evidence(
     model: Mapping[str, Any],
     candidate: Mapping[str, Any],
     question: str,
     concept_terms: Iterable[str] = (),
     limit: int = 5,
+    *,
+    intent: str = "",
 ) -> list[Citation]:
     query_tokens = _tokens(question)
     concept_terms = tuple(term.lower() for term in concept_terms)
@@ -278,8 +313,12 @@ def retrieve_evidence(
     for chunk in model.get("evidence_index", []):
         text = str(chunk.get("text") or "")
         lowered = text.lower()
-        if PROMPT_LIKE_SOURCE.search(text):
+        if PROMPT_LIKE_SOURCE.search(text) or not _supports_topic(text, intent, question):
             continue
+        if intent in {"assay_validation", "assay_adjustment", "standardization", "measurement_consistency"}:
+            markers = {key for _, key in _endpoint_mentions(text)}
+            if markers and markers != {endpoint_key}:
+                continue
         if multiple_viruses and active_virus_terms:
             mentions_other = any(term in lowered for term in known_viruses if term not in active_virus_terms)
             mentions_active = any(term in lowered for term in active_virus_terms)
@@ -318,7 +357,7 @@ def retrieve_evidence(
 def _citation_from_item(item: Mapping[str, Any]) -> Citation | None:
     location = item.get("location") or {}
     excerpt = str(item.get("evidence_text") or "")
-    if not location or not excerpt:
+    if not location or not excerpt or PROMPT_LIKE_SOURCE.search(excerpt):
         return None
     return Citation(
         document=str(location.get("document") or "article.pdf"),
@@ -337,17 +376,25 @@ def _structured_evidence(candidate: Mapping[str, Any], field_ids: Sequence[str])
     for field_id in field_ids:
         item = candidate.get("fields", {}).get(field_id, {})
         value = item.get("final_value", item.get("value"))
-        if value not in (None, "", "Could not be established from the article"):
-            values.append(f"{field_id.replace('_', ' ').title()}: {value}")
         citation = _citation_from_item(item)
-        if citation:
+        if citation and value not in (None, "", UNRESOLVED):
+            values.append(f"{field_id.replace('_', ' ').title()}: {value}")
+        if citation and citation not in citations:
             citations.append(citation)
-        conflicts.extend(item.get("conflicts") or [])
-        confidences.append(str(item.get("confidence") or "UNRESOLVED").upper())
+        for conflict in item.get("conflicts") or []:
+            if conflict not in conflicts:
+                conflicts.append(conflict)
+        if value not in (None, "", UNRESOLVED):
+            confidences.append(str(item.get("confidence") or "UNRESOLVED").upper())
     confidence = "UNRESOLVED"
     if values:
-        confidence = "LOW" if "LOW" in confidences else "MODERATE" if "MODERATE" in confidences else "HIGH"
+        confidence = "LOW" if {"LOW", "UNRESOLVED"}.intersection(confidences) else "MODERATE" if "MODERATE" in confidences else "HIGH"
     return values, citations, conflicts, confidence
+
+
+def _conflict_citations(conflicts: Iterable[Mapping[str, Any]]) -> list[Citation]:
+    return list(dict.fromkeys(citation for conflict in conflicts for option in conflict.get("candidates", [])
+                              if (citation := _citation_from_item(option))))
 
 
 def _external_refusal(question: str) -> AssistantResponse:
@@ -369,19 +416,36 @@ def _criterion_response(
     model: Mapping[str, Any], candidate: Mapping[str, Any], question: str, code: str
 ) -> AssistantResponse:
     values, citations, conflicts, confidence = _structured_evidence(candidate, CRITERION_FIELDS.get(code, ()))
+    if code in {"Q8", "Q6c"}:
+        citations.extend(c for c in _conflict_citations(conflicts) if c not in citations)
+    endpoint = ENDPOINTS_BY_KEY.get(candidate.get("endpoint_key", ""))
+    applicable = criterion_is_applicable(code, endpoint.default_pathway, endpoint.key) if endpoint else None
+    if applicable is not None and re.search(r"\b(?:applicable|apply)\b", question, re.I):
+        return AssistantResponse(
+            question, "IN_SCOPE", "framework_applicability", [code],
+            f"{code} is {'applicable' if applicable else 'not applicable'} to this endpoint under DARE-Arbo.",
+            relevance="This is a framework rule, not a finding about what the authors did.",
+        )
+    if applicable is False:
+        return AssistantResponse(
+            question, "IN_SCOPE", "criterion", [code], UNRESOLVED_ANSWER,
+            relevance=f"{code} is not applicable to this endpoint under DARE-Arbo. This is a framework rule, not a finding about what the authors did.",
+        )
     for item in candidate.get("q_evidence", {}).get(code, []):
         citation = _citation_from_item(item)
         if citation and citation.excerpt not in {existing.excerpt for existing in citations}:
             citations.append(citation)
     if not citations:
         citations = retrieve_evidence(model, candidate, question, (), 4)
-    if not citations and not values:
+    if conflicts:
+        finding, confidence = "Conflicting source evidence; no value was selected for the disputed field.", "LOW"
+    elif not citations and not values:
         finding = UNRESOLVED_ANSWER
         confidence = "UNRESOLVED"
     else:
         finding = "; ".join(values) if values else "The paper contains evidence relevant to this item, but the reviewer must determine whether it is sufficient for scoring."
         if confidence == "UNRESOLVED":
-            confidence = "MODERATE" if len(citations) > 1 else "LOW"
+            confidence = "LOW"
     return AssistantResponse(
         question=question,
         scope_status="IN_SCOPE",
@@ -401,9 +465,12 @@ def _criterion_response(
 def _summary_value(model: Mapping[str, Any], candidate: Mapping[str, Any], field_id: str) -> tuple[str, Citation | None]:
     item = candidate.get("fields", {}).get(field_id) or model.get("article_fields", {}).get(field_id) or {}
     value = item.get("final_value", item.get("value"))
-    if value in (None, "", "Could not be established from the article"):
+    if item.get("conflicts"):
+        return "Conflicting evidence — review sources", None
+    citation = _citation_from_item(item)
+    if not citation or value in (None, "", UNRESOLVED):
         return "Not reported", None
-    return str(value), _citation_from_item(item)
+    return str(value), citation
 
 
 def summarize_paper(model: Mapping[str, Any], candidate_id: str) -> dict[str, Any]:
@@ -425,19 +492,25 @@ def summarize_paper(model: Mapping[str, Any], candidate_id: str) -> dict[str, An
         ("ASSAY PATHWAY", "Confirmation coverage", "confirmation_coverage"),
         ("ESTIMATOR COUNTS", "Numerator", "numerator"),
         ("ESTIMATOR COUNTS", "Denominator", "denominator"),
+        ("ESTIMATOR COUNTS", "Tested at screening", "screen_tested"),
+        ("ESTIMATOR COUNTS", "Positive at screening", "screen_positive"),
+        ("ESTIMATOR COUNTS", "Expected for verification", "verification_expected"),
+        ("ESTIMATOR COUNTS", "Completed verification", "verification_completed"),
     )
     rows: list[dict[str, Any]] = []
     citations: list[Citation] = []
     for section, label, field_id in fields:
+        if field_id.startswith(("screen_", "verification_")) and "_tier_" not in str(candidate.get("synthesis_path_key")):
+            continue
         if field_id in {"study_design", "setting", "study_period"}:
             intent = next(item for item in INTENT_RULES if item[0] == field_id)
-            retrieved = retrieve_evidence(model, candidate, label, intent[3], 1)
+            retrieved = retrieve_evidence(model, candidate, label, intent[3], 1, intent=field_id)
             value = retrieved[0].excerpt if retrieved else "Not reported"
             citation = retrieved[0] if retrieved else None
         else:
             value, citation = _summary_value(model, candidate, field_id)
         rows.append({"section": section, "field": label, "value": value, "source": citation.to_dict() if citation else None})
-        if citation:
+        if citation and citation not in citations:
             citations.append(citation)
     gaps = [row["field"] for row in rows if row["value"] == "Not reported"]
     for conflict in candidate.get("conflicts", []):
@@ -454,13 +527,24 @@ def summarize_paper(model: Mapping[str, Any], candidate_id: str) -> dict[str, An
     }
 
 
-def answer_question(model: Mapping[str, Any], candidate_id: str, question: str) -> AssistantResponse:
+def answer_question(
+    model: Mapping[str, Any], candidate_id: str, question: str, *, criterion_context: str = "",
+) -> AssistantResponse:
     intent = classify_question(question)
-    if intent["scope"] == "out_of_scope":
+    contextual_criterion = (
+        criterion_context in CRITERION_FIELDS
+        and re.fullmatch(
+            r"(?:why (?:was this classified (?:this way|like this)|did (?:the appraiser|this item) (?:classify this this way|receive this score))|what evidence supports (?:this|the) score)\??",
+            question.strip(), re.I,
+        )
+    )
+    if intent["scope"] == "out_of_scope" and not contextual_criterion:
         return _external_refusal(question)
     candidate = candidate_by_id(model, candidate_id)
     if not candidate:
         return AssistantResponse(question, "NO_DOCUMENT_CONTEXT", "unresolved", [], UNRESOLVED_ANSWER)
+    if contextual_criterion and intent["intent"] != "criterion":
+        return _criterion_response(model, candidate, question, criterion_context)
     if intent["intent"] == "summary":
         return AssistantResponse(
             question=question,
@@ -483,17 +567,21 @@ def answer_question(model: Mapping[str, Any], candidate_id: str, question: str) 
         "recruitment": ("site_selection", "participant_selection", "laboratory_subsampling"),
         "assay_pathway": ("primary_assay", "endpoint", "confirmatory_assay", "confirmation_coverage", "confirmation_role"),
         "primary_assay": ("primary_assay", "endpoint"),
-        "assay_validation": ("primary_assay",),
+        "assay_validation": (),
         "confirmation": ("confirmatory_assay", "confirmation_coverage", "confirmation_role"),
-        "confirmation_complete": ("confirmatory_assay", "confirmation_coverage", "confirmation_role"),
+        "confirmation_complete": ("confirmatory_assay", "confirmation_coverage", "verification_expected", "verification_completed"),
         "numerator": ("numerator",),
         "denominator": ("denominator",),
-        "missingness": ("denominator",),
+        "missingness": (),
         "conflicts": ("numerator", "denominator"),
         "reporting": ("numerator", "denominator", "primary_assay"),
     }
     values, citations, conflicts, confidence = _structured_evidence(candidate, field_map.get(intent["intent"], ()))
-    retrieved = retrieve_evidence(model, candidate, question, intent.get("terms", ()), 5)
+    structured_only = {"assay_pathway", "primary_assay", "numerator", "denominator", "confirmation_complete", "confirmation", "conflicts"}
+    retrieved = (
+        retrieve_evidence(model, candidate, question, intent.get("terms", ()), 5, intent=intent["intent"])
+        if intent["intent"] not in structured_only else []
+    )
     existing = {(citation.document, citation.page, citation.excerpt) for citation in citations}
     citations.extend(
         citation for citation in retrieved
@@ -501,35 +589,44 @@ def answer_question(model: Mapping[str, Any], candidate_id: str, question: str) 
     )
 
     finding = "; ".join(values)
+    if intent["intent"] in {"numerator", "denominator"} and finding and "_tier_" in str(candidate.get("synthesis_path_key")):
+        finding += " (observed among retested screening positives; not the population estimator)."
     if intent["intent"] == "confirmation_complete":
-        coverage = str(candidate.get("fields", {}).get("confirmation_coverage", {}).get("final_value") or "")
+        fields = candidate.get("fields", {})
+        coverage_item = fields.get("confirmation_coverage", {})
+        coverage = coverage_item.get("final_value") if _citation_from_item(coverage_item) else None
+        actual, expected = (fields.get(field, {}).get("final_value") for field in ("verification_completed", "verification_expected"))
         if coverage == "All screening-positive specimens":
             finding = "The paper reports confirmation of all screening-positive specimens."
-            confidence = "HIGH"
+            confidence = coverage_item.get("confidence", "MODERATE")
         elif coverage in {"Representative/random subset", "Selected subset"}:
-            finding = (
-                f"The paper describes confirmation in a {coverage.lower()}; it does not support classification as complete confirmation of all screening-positive specimens."
-            )
-            confidence = "HIGH" if coverage == "Representative/random subset" else "MODERATE"
+            finding = "Complete confirmation of all screening-positive specimens was not established. The paper describes partial or subset verification."
+            if isinstance(actual, int) and isinstance(expected, int) and actual < expected:
+                finding += f" It reports {actual} of {expected} screening-positive specimens retested."
+            confidence = coverage_item.get("confidence", "MODERATE")
         else:
-            finding = "The paper reports confirmatory testing but does not clearly establish whether all eligible screening-positive specimens were confirmed." if citations else UNRESOLVED_ANSWER
+            finding = "The paper describes a confirmation pathway but does not clearly establish whether all eligible screening-positive specimens completed verification." if citations else UNRESOLVED_ANSWER
             confidence = "LOW" if citations else "UNRESOLVED"
     elif intent["intent"] == "conflicts":
-        conflicts = list(candidate.get("conflicts", [])) + conflicts
+        conflicts = list(candidate.get("conflicts", []))
         if conflicts:
             finding = "The paper contains multiple candidate endpoint counts or denominators. They are preserved as a discrepancy and have not been silently reconciled."
-            confidence = "HIGH"
+            confidence = "LOW"
         else:
             finding = "No structured count conflict was detected, but absence of a detected conflict does not prove that all reported counts agree."
             confidence = "LOW"
+    elif conflicts and intent["intent"] in {"numerator", "denominator"}:
+        finding = "Multiple reported counts could correspond to this endpoint. No value was selected; review the cited alternatives."
+        confidence = "LOW"
     elif not finding:
         if citations:
             finding = f"The paper reports: {citations[0].excerpt}"
-            confidence = "MODERATE" if len(citations) > 1 else "LOW"
+            confidence = "LOW"
         else:
             finding = UNRESOLVED_ANSWER
             confidence = "UNRESOLVED"
 
+    citations.extend(c for c in _conflict_citations(conflicts) if c not in citations)
     relevance_map = {
         "target_population": "This evidence informs the defined target population and Q1 context.",
         "sampling_frame": "This evidence informs who could enter the study and target-frame compatibility under Q3.",
