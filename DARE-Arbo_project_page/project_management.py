@@ -158,9 +158,21 @@ def show_direct_email(settings, identity, allowed):
                                   help='Optional. Separate addresses with commas, semicolons, or new lines.')
         subject = st.text_input('Subject', max_chars=250)
         body = st.text_area('Message', max_chars=20000, height=220)
+        attachments = st.file_uploader(
+            'Attach files (up to 15 MB total)', accept_multiple_files=True,
+            key='pm_direct_email_attachments',
+            help='The combined size of all selected files must not exceed 15 MB. The mail server may apply a lower message-size limit.',
+        )
         send = st.form_submit_button('Send email', type='primary', disabled=not configured(email_config))
 
     if not send:
+        return
+
+    attachments = attachments or []
+    attachment_bytes = sum(int(upload.size) for upload in attachments)
+    attachment_limit = 15 * 1024 * 1024
+    if attachment_bytes > attachment_limit:
+        st.error(f'Attachments total {attachment_bytes / (1024 * 1024):.1f} MB; the per-email limit is 15 MB. Remove one or more files and submit again.')
         return
 
     recipients = list(dict.fromkeys(
@@ -258,8 +270,13 @@ def show_direct_email(settings, identity, allowed):
         maintype, subtype = (mime_type or 'image/png').split('/', 1)
         html_part.add_related(logo_bytes, maintype=maintype, subtype=subtype,
                               cid=content_id, filename=logo_path.name, disposition='inline')
+    for upload in attachments:
+        filename = re.sub(r'[\x00-\x1f\x7f]+', '_', upload.name.replace('\\', '/').split('/')[-1]).strip() or 'attachment'
+        mime_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        maintype, subtype = mime_type.split('/', 1)
+        message.add_attachment(upload.getvalue(), maintype=maintype, subtype=subtype, filename=filename)
     try:
-        with st.spinner(f'Sending email to {len(recipients)} recipient(s)…'):
+        with st.spinner(f'Sending email to {len(recipients)} recipient(s) with {len(attachments)} attachment(s)…'):
             SMTPMailer(email_config).send_message(message)
     except smtplib.SMTPAuthenticationError as error:
         logging.getLogger(__name__).exception('Project email SMTP authentication failed.')
